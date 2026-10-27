@@ -209,6 +209,16 @@ pub enum DecodeError {
     #[cfg(feature = "serde")]
     /// A serde-specific error that occurred while decoding.
     Serde(crate::features::serde::DecodeError),
+
+    /// The decoder found a niche byte that the type being decoded doesn't use. See the
+    /// [niche](crate::niche) module.
+    UnexpectedNiche {
+        /// The type name that was being decoded.
+        type_name: &'static str,
+
+        /// The byte that the decoder encountered
+        found: u8,
+    },
 }
 
 impl core::fmt::Display for DecodeError {

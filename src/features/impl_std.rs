@@ -4,6 +4,7 @@ use crate::{
     enc::{write::Writer, Encode, Encoder, EncoderImpl},
     error::{DecodeError, EncodeError},
     impl_borrow_decode,
+    niche::NicheTable,
 };
 use core::time::Duration;
 use std::{
@@ -179,6 +180,8 @@ where
         })?;
         t.encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = T::ENCODE_NICHES;
 }
 
 impl<Context, T> Decode<Context> for Mutex<T>
@@ -188,6 +191,15 @@ where
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let t = T::decode(decoder)?;
         Ok(Mutex::new(t))
+    }
+
+    const DECODE_NICHES: NicheTable = T::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Mutex::new(T::decode_with_first_byte(first, decoder)?))
     }
 }
 impl<'de, T, Context> BorrowDecode<'de, Context> for Mutex<T>
@@ -199,6 +211,17 @@ where
     ) -> Result<Self, DecodeError> {
         let t = T::borrow_decode(decoder)?;
         Ok(Mutex::new(t))
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable = T::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Mutex::new(T::borrow_decode_with_first_byte(
+            first, decoder,
+        )?))
     }
 }
 
@@ -212,6 +235,8 @@ where
         })?;
         t.encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = T::ENCODE_NICHES;
 }
 
 impl<Context, T> Decode<Context> for RwLock<T>
@@ -221,6 +246,15 @@ where
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let t = T::decode(decoder)?;
         Ok(RwLock::new(t))
+    }
+
+    const DECODE_NICHES: NicheTable = T::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(RwLock::new(T::decode_with_first_byte(first, decoder)?))
     }
 }
 impl<'de, T, Context> BorrowDecode<'de, Context> for RwLock<T>
@@ -232,6 +266,17 @@ where
     ) -> Result<Self, DecodeError> {
         let t = T::borrow_decode(decoder)?;
         Ok(RwLock::new(t))
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable = T::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(RwLock::new(T::borrow_decode_with_first_byte(
+            first, decoder,
+        )?))
     }
 }
 

@@ -1,11 +1,12 @@
 use super::{
     read::{BorrowReader, Reader},
-    BorrowDecode, BorrowDecoder, Decode, Decoder,
+    BorrowDecode, BorrowDecoder, Decode, Decoder, OptionFirstByte,
 };
 use crate::{
     config::{Endianness, IntEncoding, InternalEndianConfig, InternalIntEncodingConfig},
     error::{DecodeError, IntegerType},
     impl_borrow_decode,
+    niche::{NicheTable, Niches},
 };
 use core::{
     cell::{Cell, RefCell},
@@ -20,7 +21,18 @@ use core::{
 
 impl<Context> Decode<Context> for bool {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        match u8::decode(decoder)? {
+        let first = u8::decode(decoder)?;
+        Self::decode_with_first_byte(first, decoder)
+    }
+
+    const DECODE_NICHES: NicheTable = NicheTable::uniform(Niches::range(2, u8::MAX));
+
+    #[inline]
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        _: &mut D,
+    ) -> Result<Self, DecodeError> {
+        match first {
             0 => Ok(false),
             1 => Ok(true),
             x => Err(DecodeError::InvalidBooleanValue(x)),
@@ -48,7 +60,18 @@ impl_borrow_decode!(u8);
 
 impl<Context> Decode<Context> for NonZeroU8 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        NonZeroU8::new(u8::decode(decoder)?).ok_or(DecodeError::NonZeroTypeIsZero {
+        let first = u8::decode(decoder)?;
+        Self::decode_with_first_byte(first, decoder)
+    }
+
+    const DECODE_NICHES: NicheTable = NicheTable::uniform(Niches::range(0, 0));
+
+    #[inline]
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        _: &mut D,
+    ) -> Result<Self, DecodeError> {
+        NonZeroU8::new(first).ok_or(DecodeError::NonZeroTypeIsZero {
             non_zero_type: IntegerType::U8,
         })
     }
@@ -217,7 +240,18 @@ impl_borrow_decode!(i8);
 
 impl<Context> Decode<Context> for NonZeroI8 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        NonZeroI8::new(i8::decode(decoder)?).ok_or(DecodeError::NonZeroTypeIsZero {
+        let first = u8::decode(decoder)?;
+        Self::decode_with_first_byte(first, decoder)
+    }
+
+    const DECODE_NICHES: NicheTable = NicheTable::uniform(Niches::range(0, 0));
+
+    #[inline]
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        _: &mut D,
+    ) -> Result<Self, DecodeError> {
+        NonZeroI8::new(first as i8).ok_or(DecodeError::NonZeroTypeIsZero {
             non_zero_type: IntegerType::I8,
         })
     }
@@ -399,6 +433,15 @@ impl<Context, T: Decode<Context>> Decode<Context> for Wrapping<T> {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         Ok(Wrapping(T::decode(decoder)?))
     }
+
+    const DECODE_NICHES: NicheTable = T::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Wrapping(T::decode_with_first_byte(first, decoder)?))
+    }
 }
 impl<'de, Context, T: BorrowDecode<'de, Context>> BorrowDecode<'de, Context> for Wrapping<T> {
     fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(
@@ -406,11 +449,29 @@ impl<'de, Context, T: BorrowDecode<'de, Context>> BorrowDecode<'de, Context> for
     ) -> Result<Self, DecodeError> {
         Ok(Wrapping(T::borrow_decode(decoder)?))
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = T::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Wrapping(T::borrow_decode_with_first_byte(first, decoder)?))
+    }
 }
 
 impl<Context, T: Decode<Context>> Decode<Context> for Reverse<T> {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         Ok(Reverse(T::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = T::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Reverse(T::decode_with_first_byte(first, decoder)?))
     }
 }
 
@@ -420,26 +481,41 @@ impl<'de, Context, T: BorrowDecode<'de, Context>> BorrowDecode<'de, Context> for
     ) -> Result<Self, DecodeError> {
         Ok(Reverse(T::borrow_decode(decoder)?))
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = T::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Reverse(T::borrow_decode_with_first_byte(first, decoder)?))
+    }
 }
 
 impl<Context> Decode<Context> for char {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let mut array = [0u8; 4];
-
         // Look at the first byte to see how many bytes must be read
-        decoder.reader().read(&mut array[..1])?;
+        let first = u8::decode(decoder)?;
+        Self::decode_with_first_byte(first, decoder)
+    }
 
-        let width = utf8_char_width(array[0]);
+    const DECODE_NICHES: NicheTable = NicheTable::uniform(Niches::range(0x80, 0xC1));
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let mut array = [first, 0, 0, 0];
+
+        let width = utf8_char_width(first);
         if width == 0 {
             return Err(DecodeError::InvalidCharEncoding(array));
         }
-        // Normally we have to `.claim_bytes_read` before reading, however in this
-        // case the amount of bytes read from `char` can vary wildly, and it should
-        // only read up to 4 bytes too much.
-        decoder.claim_bytes_read(width)?;
         if width == 1 {
-            return Ok(array[0] as char);
+            return Ok(first as char);
         }
+        // The first byte has already been claimed.
+        decoder.claim_bytes_read(width - 1)?;
 
         // read the remaining pain
         decoder.reader().read(&mut array[1..width])?;
@@ -552,12 +628,25 @@ where
     T: Decode<Context>,
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        match super::decode_option_variant(decoder, core::any::type_name::<Option<T>>())? {
-            Some(_) => {
-                let val = T::decode(decoder)?;
-                Ok(Some(val))
-            }
-            None => Ok(None),
+        let first = u8::decode(decoder)?;
+        Self::decode_with_first_byte(first, decoder)
+    }
+
+    const DECODE_NICHES: NicheTable = T::DECODE_NICHES.option();
+
+    #[inline]
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        match super::decode_option_first_byte(
+            first,
+            const { T::DECODE_NICHES.get::<D::C>() },
+            core::any::type_name::<Option<T>>(),
+        )? {
+            OptionFirstByte::None => Ok(None),
+            OptionFirstByte::SomeTag => Ok(Some(T::decode(decoder)?)),
+            OptionFirstByte::SomePayload => Ok(Some(T::decode_with_first_byte(first, decoder)?)),
         }
     }
 }
@@ -569,12 +658,27 @@ where
     fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
-        match super::decode_option_variant(decoder, core::any::type_name::<Option<T>>())? {
-            Some(_) => {
-                let val = T::borrow_decode(decoder)?;
-                Ok(Some(val))
+        let first = u8::decode(decoder)?;
+        Self::borrow_decode_with_first_byte(first, decoder)
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable = T::BORROW_DECODE_NICHES.option();
+
+    #[inline]
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        match super::decode_option_first_byte(
+            first,
+            const { T::BORROW_DECODE_NICHES.get::<D::C>() },
+            core::any::type_name::<Option<T>>(),
+        )? {
+            OptionFirstByte::None => Ok(None),
+            OptionFirstByte::SomeTag => Ok(Some(T::borrow_decode(decoder)?)),
+            OptionFirstByte::SomePayload => {
+                Ok(Some(T::borrow_decode_with_first_byte(first, decoder)?))
             }
-            None => Ok(None),
         }
     }
 }
@@ -639,6 +743,15 @@ where
         let t = T::decode(decoder)?;
         Ok(Cell::new(t))
     }
+
+    const DECODE_NICHES: NicheTable = T::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Cell::new(T::decode_with_first_byte(first, decoder)?))
+    }
 }
 
 impl<'de, T, Context> BorrowDecode<'de, Context> for Cell<T>
@@ -651,6 +764,15 @@ where
         let t = T::borrow_decode(decoder)?;
         Ok(Cell::new(t))
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = T::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Cell::new(T::borrow_decode_with_first_byte(first, decoder)?))
+    }
 }
 
 impl<Context, T> Decode<Context> for RefCell<T>
@@ -660,6 +782,15 @@ where
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let t = T::decode(decoder)?;
         Ok(RefCell::new(t))
+    }
+
+    const DECODE_NICHES: NicheTable = T::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(RefCell::new(T::decode_with_first_byte(first, decoder)?))
     }
 }
 
@@ -672,6 +803,17 @@ where
     ) -> Result<Self, DecodeError> {
         let t = T::borrow_decode(decoder)?;
         Ok(RefCell::new(t))
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable = T::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(RefCell::new(T::borrow_decode_with_first_byte(
+            first, decoder,
+        )?))
     }
 }
 

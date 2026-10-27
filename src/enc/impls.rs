@@ -2,6 +2,7 @@ use super::{write::Writer, Encode, Encoder};
 use crate::{
     config::{Endianness, IntEncoding, InternalEndianConfig, InternalIntEncodingConfig},
     error::EncodeError,
+    niche::{NicheTable, Niches},
 };
 use core::cmp::Reverse;
 use core::{
@@ -31,6 +32,8 @@ impl Encode for bool {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         u8::from(*self).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = NicheTable::uniform(Niches::range(2, u8::MAX));
 }
 
 impl Encode for u8 {
@@ -43,6 +46,8 @@ impl Encode for NonZeroU8 {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         self.get().encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = NicheTable::uniform(Niches::range(0, 0));
 }
 
 impl Encode for u16 {
@@ -155,6 +160,8 @@ impl Encode for NonZeroI8 {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         self.get().encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = NicheTable::uniform(Niches::range(0, 0));
 }
 
 impl Encode for i16 {
@@ -279,18 +286,25 @@ impl<T: Encode> Encode for Wrapping<T> {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         self.0.encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = T::ENCODE_NICHES;
 }
 
 impl<T: Encode> Encode for Reverse<T> {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         self.0.encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = T::ENCODE_NICHES;
 }
 
 impl Encode for char {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         encode_utf8(encoder.writer(), *self)
     }
+
+    /// UTF-8 continuation bytes and the overlong lead bytes `0xC0` and `0xC1` never begin a char.
+    const ENCODE_NICHES: NicheTable = NicheTable::uniform(Niches::range(0x80, 0xC1));
 }
 
 impl<T> Encode for [T]
@@ -378,12 +392,23 @@ where
     T: Encode,
 {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        super::encode_option_variant(encoder, self)?;
-        if let Some(val) = self {
-            val.encode(encoder)?;
+        let niches = const { T::ENCODE_NICHES.get::<E::C>() };
+        if niches.is_empty() {
+            super::encode_option_variant(encoder, self)?;
+            if let Some(val) = self {
+                val.encode(encoder)?;
+            }
+            Ok(())
+        } else {
+            // `None` takes the payload's first niche, so `Some` needs no tag.
+            match self {
+                Some(val) => val.encode(encoder),
+                None => niches.start().encode(encoder),
+            }
         }
-        Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = T::ENCODE_NICHES.option();
 }
 
 impl<T, U> Encode for Result<T, U>
@@ -412,6 +437,8 @@ where
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         T::encode(&self.get(), encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = T::ENCODE_NICHES;
 }
 
 impl<T> Encode for RefCell<T>
@@ -427,6 +454,8 @@ where
             })?;
         T::encode(&borrow_guard, encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = T::ENCODE_NICHES;
 }
 
 impl Encode for Duration {
@@ -488,4 +517,6 @@ where
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         T::encode(self, encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = T::ENCODE_NICHES;
 }

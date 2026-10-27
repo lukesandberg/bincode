@@ -1,0 +1,246 @@
+//! Niches: first-byte values that a type's encoding never begins with.
+//!
+//! A wrapper type can use a niche of its payload in place of a separate tag. For example,
+//! [`NonZeroU8`](core::num::NonZeroU8) never encodes as `0x00`, so `Option<NonZeroU8>` encodes
+//! `None` as `0x00` and `Some(n)` as `n` alone, instead of a tag byte followed by the payload.
+//!
+//! Types declare their niches with [`Encode::ENCODE_NICHES`], [`Decode::DECODE_NICHES`] and
+//! [`BorrowDecode::BORROW_DECODE_NICHES`], all of which default to [`NicheTable::NONE`].
+//!
+//! [`Encode::ENCODE_NICHES`]: crate::Encode::ENCODE_NICHES
+//! [`Decode::DECODE_NICHES`]: crate::Decode::DECODE_NICHES
+//! [`BorrowDecode::BORROW_DECODE_NICHES`]: crate::BorrowDecode::BORROW_DECODE_NICHES
+
+use crate::config::{Config, Endianness, IntEncoding};
+
+/// A contiguous range of first-byte values that a type's encoding never begins with.
+///
+/// A wrapper claims niches from the front of the range: `Option<T>` encodes `None` as
+/// [`start`](Niches::start) and reports the rest, [`skip(1)`](Niches::skip), as its own niches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Niches {
+    start: u8,
+    len: u8,
+}
+
+impl Niches {
+    /// No niches: every first byte may begin a valid encoding.
+    pub const NONE: Niches = Niches { start: 0, len: 0 };
+
+    /// The niches `start..=end`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `end < start`, or if the range covers every byte value (a type that writes at
+    /// least one byte must begin with some valid byte). In a niche constant, this is a compile
+    /// error:
+    ///
+    /// ```compile_fail
+    /// use bincode::niche::{NicheTable, Niches};
+    /// const ALL: NicheTable = NicheTable::uniform(Niches::range(0, u8::MAX));
+    /// ```
+    #[inline]
+    pub const fn range(start: u8, end: u8) -> Niches {
+        assert!(start <= end, "niche range must not be empty");
+        assert!(
+            !(start == 0 && end == u8::MAX),
+            "niche range must not cover every byte value"
+        );
+        Niches {
+            start,
+            len: end - start + 1,
+        }
+    }
+
+    /// The number of niches.
+    #[inline]
+    pub const fn len(self) -> u8 {
+        self.len
+    }
+
+    /// Returns `true` if there are no niches.
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
+    /// The first niche byte, which is the next one a wrapper should claim. Only meaningful when
+    /// the range is not empty.
+    #[inline]
+    pub const fn start(self) -> u8 {
+        self.start
+    }
+
+    /// Returns `true` if `byte` is one of the niches.
+    #[inline]
+    pub const fn contains(self, byte: u8) -> bool {
+        byte >= self.start && byte - self.start < self.len
+    }
+
+    /// The niches left after a wrapper claims `n` of them from the front.
+    #[inline]
+    pub const fn skip(self, n: u8) -> Niches {
+        if n >= self.len {
+            Niches::NONE
+        } else {
+            Niches {
+                start: self.start + n,
+                len: self.len - n,
+            }
+        }
+    }
+
+    /// The niches of `Option<T>`, given the niches of `T`.
+    ///
+    /// If `T` has niches, `None` claims the first one and the rest pass through. Otherwise
+    /// `Option<T>` writes a `0`/`1` tag, which leaves `2..=255` unused.
+    #[inline]
+    const fn option(self) -> Niches {
+        if self.is_empty() {
+            Niches::range(2, u8::MAX)
+        } else {
+            self.skip(1)
+        }
+    }
+}
+
+/// A type's [`Niches`] under each config that can change them.
+///
+/// Niches are declared as associated constants, which can't be generic over the config, so this
+/// holds one entry for every config that encodes first bytes differently, and
+/// [`get`](NicheTable::get) picks the entry for a given config. Under variable int encoding the
+/// first byte of an integer is its tag, so endianness doesn't matter there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NicheTable {
+    varint: Niches,
+    fixint_little_endian: Niches,
+    fixint_big_endian: Niches,
+}
+
+impl NicheTable {
+    /// No niches under any config.
+    pub const NONE: NicheTable = NicheTable::uniform(Niches::NONE);
+
+    /// The same niches under every config, for types like `bool` whose encoding doesn't depend
+    /// on it.
+    #[inline]
+    pub const fn uniform(niches: Niches) -> NicheTable {
+        NicheTable {
+            varint: niches,
+            fixint_little_endian: niches,
+            fixint_big_endian: niches,
+        }
+    }
+
+    /// Niches under variable int encoding only, for types that start with a varint.
+    #[inline]
+    pub const fn varint_only(niches: Niches) -> NicheTable {
+        NicheTable {
+            varint: niches,
+            fixint_little_endian: Niches::NONE,
+            fixint_big_endian: Niches::NONE,
+        }
+    }
+
+    /// Separate niches for variable int encoding and for fixed int encoding in each endianness.
+    #[inline]
+    pub const fn new(
+        varint: Niches,
+        fixint_little_endian: Niches,
+        fixint_big_endian: Niches,
+    ) -> NicheTable {
+        NicheTable {
+            varint,
+            fixint_little_endian,
+            fixint_big_endian,
+        }
+    }
+
+    /// The niches under config `C`.
+    #[inline]
+    pub const fn get<C: Config>(self) -> Niches {
+        match C::INT_ENCODING {
+            IntEncoding::Variable => self.varint,
+            IntEncoding::Fixed => match C::ENDIAN {
+                Endianness::Little => self.fixint_little_endian,
+                Endianness::Big => self.fixint_big_endian,
+            },
+        }
+    }
+
+    /// The niches of `Option<T>` under every config, given the niches of `T`.
+    #[inline]
+    pub(crate) const fn option(self) -> NicheTable {
+        NicheTable {
+            varint: self.varint.option(),
+            fixint_little_endian: self.fixint_little_endian.option(),
+            fixint_big_endian: self.fixint_big_endian.option(),
+        }
+    }
+}
+
+#[test]
+fn test_niches() {
+    let n = Niches::range(253, 255);
+    assert_eq!(n.len(), 3);
+    assert_eq!(n.start(), 253);
+    assert!(!n.contains(0));
+    assert!(!n.contains(252));
+    assert!(n.contains(253));
+    assert!(n.contains(255));
+    assert_eq!(n.skip(1), Niches::range(254, 255));
+    assert_eq!(n.skip(3), Niches::NONE);
+    assert_eq!(n.skip(200), Niches::NONE);
+
+    assert!(Niches::NONE.is_empty());
+    for b in 0..=u8::MAX {
+        assert!(!Niches::NONE.contains(b));
+    }
+
+    let zero = Niches::range(0, 0);
+    assert!(zero.contains(0));
+    assert!(!zero.contains(1));
+
+    assert_eq!(Niches::NONE.option(), Niches::range(2, 255));
+    assert_eq!(zero.option(), Niches::NONE);
+}
+
+#[test]
+fn test_niche_table() {
+    use crate::config;
+
+    let table = NicheTable::new(
+        Niches::range(250, 255),
+        Niches::range(10, 255),
+        Niches::range(1, 255),
+    );
+    assert_eq!(
+        table.get::<config::Configuration>(),
+        Niches::range(250, 255)
+    );
+    assert_eq!(
+        table.get::<config::Configuration<config::BigEndian>>(),
+        Niches::range(250, 255)
+    );
+    assert_eq!(
+        table.get::<config::Configuration<config::LittleEndian, config::Fixint>>(),
+        Niches::range(10, 255)
+    );
+    assert_eq!(
+        table.get::<config::Configuration<config::BigEndian, config::Fixint>>(),
+        Niches::range(1, 255)
+    );
+
+    let varint = NicheTable::varint_only(Niches::range(255, 255));
+    assert_eq!(
+        varint.get::<config::Configuration<config::LittleEndian, config::Fixint>>(),
+        Niches::NONE
+    );
+    assert_eq!(
+        varint
+            .option()
+            .get::<config::Configuration<config::LittleEndian, config::Fixint>>(),
+        Niches::range(2, 255)
+    );
+    assert_eq!(varint.option().get::<config::Configuration>(), Niches::NONE);
+}

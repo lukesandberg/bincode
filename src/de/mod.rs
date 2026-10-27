@@ -12,6 +12,7 @@ use self::{
 use crate::{
     config::{Config, InternalLimitConfig},
     error::DecodeError,
+    niche::{NicheTable, Niches},
     utils::Sealed,
 };
 
@@ -103,6 +104,29 @@ pub use self::decoder::DecoderImpl;
 pub trait Decode<Context>: Sized {
     /// Attempt to decode this type with the given [Decode].
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError>;
+
+    /// The first-byte values that never begin a valid encoding of `Self`, under each config.
+    ///
+    /// This must agree with [`Encode::ENCODE_NICHES`](crate::Encode::ENCODE_NICHES). If it is not
+    /// empty for some config, [`decode_with_first_byte`](Decode::decode_with_first_byte) must be
+    /// implemented too. The default is [`NicheTable::NONE`]. See the [niche](crate::niche) module.
+    const DECODE_NICHES: NicheTable = NicheTable::NONE;
+
+    /// Decode `Self` when the first byte of its encoding, `first`, has already been read from
+    /// `decoder` and claimed against its limit.
+    ///
+    /// Wrappers call this after reading a byte that isn't one of the niches they use. `first` is
+    /// never one of [`DECODE_NICHES`](Decode::DECODE_NICHES). It is only called on types that
+    /// declare niches, and the default returns an error.
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let _ = (first, decoder);
+        Err(DecodeError::Other(
+            "decode_with_first_byte called on a type that declares no niches",
+        ))
+    }
 }
 
 /// Trait that makes a type able to be decoded, akin to serde's `Deserialize` trait.
@@ -115,6 +139,20 @@ pub trait BorrowDecode<'de, Context>: Sized {
     fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(
         decoder: &mut D,
     ) -> Result<Self, DecodeError>;
+
+    /// The borrowing counterpart of [`Decode::DECODE_NICHES`].
+    const BORROW_DECODE_NICHES: NicheTable = NicheTable::NONE;
+
+    /// The borrowing counterpart of [`Decode::decode_with_first_byte`].
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let _ = (first, decoder);
+        Err(DecodeError::Other(
+            "borrow_decode_with_first_byte called on a type that declares no niches",
+        ))
+    }
 }
 
 /// Helper macro to implement `BorrowDecode` for any type that implements `Decode`.
@@ -134,6 +172,16 @@ macro_rules! impl_borrow_decode_with_context {
                 decoder: &mut D,
             ) -> core::result::Result<Self, $crate::error::DecodeError> {
                 $crate::Decode::decode(decoder)
+            }
+
+            const BORROW_DECODE_NICHES: $crate::niche::NicheTable =
+                <Self as $crate::Decode<$context>>::DECODE_NICHES;
+
+            fn borrow_decode_with_first_byte<D: $crate::de::BorrowDecoder<'de, Context = $context>>(
+                first: u8,
+                decoder: &mut D,
+            ) -> core::result::Result<Self, $crate::error::DecodeError> {
+                <Self as $crate::Decode<$context>>::decode_with_first_byte(first, decoder)
             }
         }
     };
@@ -302,6 +350,9 @@ where
 }
 
 /// Decodes only the option variant from the decoder. Will not read any more data than that.
+///
+/// Serde can't see the niches of an option's payload, so it always uses this tag.
+#[cfg(feature = "serde")]
 #[inline]
 pub(crate) fn decode_option_variant<D: Decoder>(
     decoder: &mut D,
@@ -316,6 +367,46 @@ pub(crate) fn decode_option_variant<D: Decoder>(
             allowed: &crate::error::AllowedEnumVariants::Range { max: 1, min: 0 },
             type_name,
         }),
+    }
+}
+
+/// What the first byte of an encoded `Option<T>` stands for.
+pub(crate) enum OptionFirstByte {
+    /// `None`.
+    None,
+    /// The `Some` tag. The payload follows it.
+    SomeTag,
+    /// `Some`, and the byte is the first byte of the payload.
+    SomePayload,
+}
+
+/// Interprets the first byte of an encoded `Option<T>`, where `payload_niches` are the niches of
+/// `T`.
+#[inline]
+pub(crate) fn decode_option_first_byte(
+    first: u8,
+    payload_niches: Niches,
+    type_name: &'static str,
+) -> Result<OptionFirstByte, DecodeError> {
+    if payload_niches.is_empty() {
+        match first {
+            0 => Ok(OptionFirstByte::None),
+            1 => Ok(OptionFirstByte::SomeTag),
+            x => Err(DecodeError::UnexpectedVariant {
+                found: x as u32,
+                allowed: &crate::error::AllowedEnumVariants::Range { max: 1, min: 0 },
+                type_name,
+            }),
+        }
+    } else if first == payload_niches.start() {
+        Ok(OptionFirstByte::None)
+    } else if payload_niches.contains(first) {
+        Err(DecodeError::UnexpectedNiche {
+            type_name,
+            found: first,
+        })
+    } else {
+        Ok(OptionFirstByte::SomePayload)
     }
 }
 

@@ -101,6 +101,7 @@ pub mod config;
 pub mod de;
 pub mod enc;
 pub mod error;
+pub mod niche;
 
 pub use de::{BorrowDecode, Decode};
 pub use enc::Encode;

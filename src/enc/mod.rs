@@ -5,7 +5,7 @@ mod impl_tuples;
 mod impls;
 
 use self::write::Writer;
-use crate::{config::Config, error::EncodeError, utils::Sealed};
+use crate::{config::Config, error::EncodeError, niche::NicheTable, utils::Sealed};
 
 pub mod write;
 
@@ -50,6 +50,15 @@ pub use self::encoder::EncoderImpl;
 pub trait Encode {
     /// Encode a given type.
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError>;
+
+    /// The first-byte values that [`encode`](Encode::encode) never writes, under each config.
+    ///
+    /// Wrappers use these in place of a tag: if `T` has niches, `Option<T>` encodes `None` as the
+    /// first niche byte and `Some(v)` as `v` alone. See the [niche](crate::niche) module.
+    ///
+    /// This must agree with [`Decode::DECODE_NICHES`](crate::Decode::DECODE_NICHES), and no niche
+    /// byte may ever begin a valid encoding of `Self`. The default is [`NicheTable::NONE`].
+    const ENCODE_NICHES: NicheTable = NicheTable::NONE;
 }
 
 /// Helper trait to encode basic types into.
