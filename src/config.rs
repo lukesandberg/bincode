@@ -26,17 +26,21 @@ use core::marker::PhantomData;
 ///
 /// - [with_little_endian] and [with_big_endian]
 /// - [with_fixed_int_encoding] and [with_variable_int_encoding]
+/// - [with_niches] and [without_niches]
 ///
 ///
 /// [with_little_endian]: #method.with_little_endian
 /// [with_big_endian]: #method.with_big_endian
 /// [with_fixed_int_encoding]: #method.with_fixed_int_encoding
 /// [with_variable_int_encoding]: #method.with_variable_int_encoding
+/// [with_niches]: #method.with_niches
+/// [without_niches]: #method.without_niches
 #[derive(Copy, Clone, Debug)]
-pub struct Configuration<E = LittleEndian, I = Varint, L = NoLimit> {
+pub struct Configuration<E = LittleEndian, I = Varint, L = NoLimit, N = NoNiches> {
     _e: PhantomData<E>,
     _i: PhantomData<I>,
     _l: PhantomData<L>,
+    _n: PhantomData<N>,
 }
 
 // When adding more features to configuration, follow these steps:
@@ -52,6 +56,7 @@ pub struct Configuration<E = LittleEndian, I = Varint, L = NoLimit> {
 /// The default config for bincode 2.0. By default this will be:
 /// - Little endian
 /// - Variable int encoding
+/// - No niches
 pub const fn standard() -> Configuration {
     generate()
 }
@@ -63,28 +68,29 @@ pub const fn legacy() -> Configuration<LittleEndian, Fixint, NoLimit> {
     generate()
 }
 
-impl<E, I, L> Default for Configuration<E, I, L> {
+impl<E, I, L, N> Default for Configuration<E, I, L, N> {
     fn default() -> Self {
         generate()
     }
 }
 
-const fn generate<E, I, L>() -> Configuration<E, I, L> {
+const fn generate<E, I, L, N>() -> Configuration<E, I, L, N> {
     Configuration {
         _e: PhantomData,
         _i: PhantomData,
         _l: PhantomData,
+        _n: PhantomData,
     }
 }
 
-impl<E, I, L> Configuration<E, I, L> {
+impl<E, I, L, N> Configuration<E, I, L, N> {
     /// Makes bincode encode all integer types in big endian.
-    pub const fn with_big_endian(self) -> Configuration<BigEndian, I, L> {
+    pub const fn with_big_endian(self) -> Configuration<BigEndian, I, L, N> {
         generate()
     }
 
     /// Makes bincode encode all integer types in little endian.
-    pub const fn with_little_endian(self) -> Configuration<LittleEndian, I, L> {
+    pub const fn with_little_endian(self) -> Configuration<LittleEndian, I, L, N> {
         generate()
     }
 
@@ -144,7 +150,7 @@ impl<E, I, L> Configuration<E, I, L> {
     ///
     /// Note that u256 and the like are unsupported by this format; if and when they are added to the
     /// language, they may be supported via the extension point given by the 255 byte.
-    pub const fn with_variable_int_encoding(self) -> Configuration<E, Varint, L> {
+    pub const fn with_variable_int_encoding(self) -> Configuration<E, Varint, L, N> {
         generate()
     }
 
@@ -153,24 +159,52 @@ impl<E, I, L> Configuration<E, I, L> {
     /// * Fixed size integers are encoded directly
     /// * Enum discriminants are encoded as u32
     /// * Lengths and usize are encoded as u64
-    pub const fn with_fixed_int_encoding(self) -> Configuration<E, Fixint, L> {
+    pub const fn with_fixed_int_encoding(self) -> Configuration<E, Fixint, L, N> {
         generate()
     }
 
     /// Sets the byte limit to `limit`.
-    pub const fn with_limit<const N: usize>(self) -> Configuration<E, I, Limit<N>> {
+    pub const fn with_limit<const LIMIT: usize>(self) -> Configuration<E, I, Limit<LIMIT>, N> {
         generate()
     }
 
     /// Clear the byte limit.
-    pub const fn with_no_limit(self) -> Configuration<E, I, NoLimit> {
+    pub const fn with_no_limit(self) -> Configuration<E, I, NoLimit, N> {
+        generate()
+    }
+
+    /// Makes `Option`s use the niches of their payload in place of a tag.
+    ///
+    /// Many types never begin their encoding with certain byte values: a `NonZeroU8` is never
+    /// `0`, a `bool` is never above `1`, and under variable int encoding an integer never begins
+    /// with the tag of a wider integer. With this setting, `Option<T>` encodes `None` as one of
+    /// those bytes and `Some(v)` as `v` alone, so `Option<NonZeroU8>` is always one byte. If `T`
+    /// has no niches, the option is encoded with a tag as usual.
+    ///
+    /// This changes the encoding of options, so data must be decoded with the same setting it was
+    /// encoded with. Serde's `Option` support can't see the payload's niches, so with this
+    /// setting, options encoded through the [serde](crate::serde) functions no longer match
+    /// those encoded with [Encode](crate::Encode).
+    ///
+    /// See the [niche](crate::niche) module for more information.
+    pub const fn with_niches(self) -> Configuration<E, I, L, UseNiches> {
+        generate()
+    }
+
+    /// Makes `Option`s always write a tag. This is the default.
+    pub const fn without_niches(self) -> Configuration<E, I, L, NoNiches> {
         generate()
     }
 }
 
 /// Indicates a type is valid for controlling the bincode configuration
 pub trait Config:
-    InternalEndianConfig + InternalIntEncodingConfig + InternalLimitConfig + Copy + Clone
+    InternalEndianConfig
+    + InternalIntEncodingConfig
+    + InternalLimitConfig
+    + InternalNicheConfig
+    + Copy
+    + Clone
 {
     /// This configuration's Endianness
     fn endianness(&self) -> Endianness;
@@ -180,11 +214,19 @@ pub trait Config:
 
     /// This configuration's byte limit, or `None` if no limit is configured
     fn limit(&self) -> Option<usize>;
+
+    /// Whether this configuration uses niches, see [Configuration::with_niches]
+    fn use_niches(&self) -> bool;
 }
 
 impl<T> Config for T
 where
-    T: InternalEndianConfig + InternalIntEncodingConfig + InternalLimitConfig + Copy + Clone,
+    T: InternalEndianConfig
+        + InternalIntEncodingConfig
+        + InternalLimitConfig
+        + InternalNicheConfig
+        + Copy
+        + Clone,
 {
     fn endianness(&self) -> Endianness {
         <T as InternalEndianConfig>::ENDIAN
@@ -196,6 +238,10 @@ where
 
     fn limit(&self) -> Option<usize> {
         <T as InternalLimitConfig>::LIMIT
+    }
+
+    fn use_niches(&self) -> bool {
+        <T as InternalNicheConfig>::USE_NICHES
     }
 }
 
@@ -245,6 +291,20 @@ impl<const N: usize> InternalLimitConfig for Limit<N> {
     const LIMIT: Option<usize> = Some(N);
 }
 
+/// Encodes `Option`s using the niches of their payload, see [Configuration::with_niches].
+#[derive(Copy, Clone, Debug)]
+pub struct UseNiches;
+impl InternalNicheConfig for UseNiches {
+    const USE_NICHES: bool = true;
+}
+
+/// Encodes `Option`s with a tag.
+#[derive(Copy, Clone, Debug)]
+pub struct NoNiches;
+impl InternalNicheConfig for NoNiches {
+    const USE_NICHES: bool = false;
+}
+
 /// Endianness of a `Configuration`.
 #[derive(PartialEq, Eq)]
 #[non_exhaustive]
@@ -272,7 +332,7 @@ mod internal {
         const ENDIAN: Endianness;
     }
 
-    impl<E: InternalEndianConfig, I, L> InternalEndianConfig for Configuration<E, I, L> {
+    impl<E: InternalEndianConfig, I, L, N> InternalEndianConfig for Configuration<E, I, L, N> {
         const ENDIAN: Endianness = E::ENDIAN;
     }
 
@@ -280,7 +340,9 @@ mod internal {
         const INT_ENCODING: IntEncoding;
     }
 
-    impl<E, I: InternalIntEncodingConfig, L> InternalIntEncodingConfig for Configuration<E, I, L> {
+    impl<E, I: InternalIntEncodingConfig, L, N> InternalIntEncodingConfig
+        for Configuration<E, I, L, N>
+    {
         const INT_ENCODING: IntEncoding = I::INT_ENCODING;
     }
 
@@ -288,7 +350,15 @@ mod internal {
         const LIMIT: Option<usize>;
     }
 
-    impl<E, I, L: InternalLimitConfig> InternalLimitConfig for Configuration<E, I, L> {
+    impl<E, I, L: InternalLimitConfig, N> InternalLimitConfig for Configuration<E, I, L, N> {
         const LIMIT: Option<usize> = L::LIMIT;
+    }
+
+    pub trait InternalNicheConfig {
+        const USE_NICHES: bool;
+    }
+
+    impl<E, I, L, N: InternalNicheConfig> InternalNicheConfig for Configuration<E, I, L, N> {
+        const USE_NICHES: bool = N::USE_NICHES;
     }
 }

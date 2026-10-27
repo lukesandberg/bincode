@@ -8,12 +8,18 @@ pub(crate) struct DeriveStruct {
 }
 
 impl DeriveStruct {
-    /// With `#[bincode(niche)]`, the field whose niches the struct takes: the first field that is
-    /// encoded. Returns its name and type.
+    /// The field whose niches the struct takes: its first encoded field, if that field uses its
+    /// own `Encode` and `Decode` impls and its type has no lifetimes. Returns its name and type,
+    /// or `None` if there is no such field or the struct has `#[bincode(no_niche)]`.
+    ///
+    /// The niches are named by the field's type, as in `<Cow<'a, str> as BorrowDecode<'__de, _>>`,
+    /// which may not hold for the lifetimes as written even though the decoded field does, so
+    /// fields with lifetimes are left out. All three derives apply the same rule so that they
+    /// agree on the niches.
     fn niche_field(&self) -> Result<Option<(IdentOrIndex, String)>> {
-        let Some(niche) = &self.attributes.niche else {
+        if self.attributes.no_niche {
             return Ok(None);
-        };
+        }
         let fields: Vec<&UnnamedField> = match &self.fields {
             Some(Fields::Tuple(fields)) => fields.iter().collect(),
             Some(Fields::Struct(fields)) => fields.iter().map(|(_, field)| field).collect(),
@@ -28,19 +34,13 @@ impl DeriveStruct {
             if attributes.skip {
                 continue;
             }
-            if attributes.with.is_some() || attributes.with_serde {
-                return Err(Error::custom_at(
-                    "`niche` takes the niches of the first encoded field, which must not use `with` or `with_serde`",
-                    niche.span(),
-                ));
+            if attributes.with.is_some() || attributes.with_serde || has_lifetime(&field.r#type) {
+                return Ok(None);
             }
             let ty = TokenStream::from_iter(field.r#type.iter().cloned()).to_string();
             return Ok(Some((name, ty)));
         }
-        Err(Error::custom_at(
-            "`niche` takes the niches of the first encoded field, but this type has none",
-            niche.span(),
-        ))
+        Ok(None)
     }
 
     pub fn generate_encode(self, generator: &mut Generator) -> Result<()> {
@@ -426,4 +426,16 @@ impl DeriveStruct {
         })?;
         Ok(())
     }
+}
+
+/// Returns `true` if `tokens` contain a lifetime, like `'a` or `'static`.
+fn has_lifetime(tokens: &[TokenTree]) -> bool {
+    tokens.iter().any(|token| match token {
+        TokenTree::Punct(punct) => punct.as_char() == '\'',
+        TokenTree::Group(group) => {
+            let tokens: Vec<TokenTree> = group.stream().into_iter().collect();
+            has_lifetime(&tokens)
+        }
+        _ => false,
+    })
 }

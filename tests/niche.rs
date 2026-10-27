@@ -59,10 +59,18 @@ fn check<T>(value: T, expected: &[u8])
 where
     T: Encode + Decode<()> + for<'de> BorrowDecode<'de, ()> + PartialEq + Debug,
 {
-    check_with_config(&value, expected, config::standard());
-    check_with_config(&value, expected, config::standard().with_big_endian());
-    check_with_config(&value, expected, config::legacy());
-    check_with_config(&value, expected, config::legacy().with_big_endian());
+    check_with_config(&value, expected, config::standard().with_niches());
+    check_with_config(
+        &value,
+        expected,
+        config::standard().with_niches().with_big_endian(),
+    );
+    check_with_config(&value, expected, config::legacy().with_niches());
+    check_with_config(
+        &value,
+        expected,
+        config::legacy().with_niches().with_big_endian(),
+    );
 }
 
 /// Runs [check_with_config] under variable int encoding, in both endiannesses.
@@ -70,8 +78,12 @@ fn check_varint<T>(value: T, expected: &[u8])
 where
     T: Encode + Decode<()> + for<'de> BorrowDecode<'de, ()> + PartialEq + Debug,
 {
-    check_with_config(&value, expected, config::standard());
-    check_with_config(&value, expected, config::standard().with_big_endian());
+    check_with_config(&value, expected, config::standard().with_niches());
+    check_with_config(
+        &value,
+        expected,
+        config::standard().with_niches().with_big_endian(),
+    );
 }
 
 #[test]
@@ -138,14 +150,15 @@ fn wrappers_forward_niches() {
     check(None::<RefCell<bool>>, &[2]);
 
     assert_eq!(
-        bincode::encode_to_vec(None::<&bool>, config::standard()).unwrap(),
+        bincode::encode_to_vec(None::<&bool>, config::standard().with_niches()).unwrap(),
         [2]
     );
 
-    let bytes = bincode::encode_to_vec(None::<Mutex<bool>>, config::standard()).unwrap();
+    let bytes =
+        bincode::encode_to_vec(None::<Mutex<bool>>, config::standard().with_niches()).unwrap();
     assert_eq!(bytes, [2]);
     let (decoded, _): (Option<Mutex<bool>>, usize) =
-        bincode::decode_from_slice(&[1], config::standard()).unwrap();
+        bincode::decode_from_slice(&[1], config::standard().with_niches()).unwrap();
     assert!(*decoded.unwrap().lock().unwrap());
 }
 
@@ -164,16 +177,20 @@ fn option_varint_uses_spare_tags() {
     check_varint(Some(-1i32), &[1]);
     check_varint(NonZeroU32::new(5), &[5]);
     check_varint(NonZeroI32::new(-1), &[1]);
-    check_with_config(&Some(300u32), &[251, 44, 1], config::standard());
+    check_with_config(
+        &Some(300u32),
+        &[251, 44, 1],
+        config::standard().with_niches(),
+    );
     check_with_config(
         &Some(300u32),
         &[251, 1, 44],
-        config::standard().with_big_endian(),
+        config::standard().with_niches().with_big_endian(),
     );
     check_with_config(
         &Some(u64::MAX),
         &[253, 255, 255, 255, 255, 255, 255, 255, 255],
-        config::standard(),
+        config::standard().with_niches(),
     );
 
     // Nested options take the next spare tag.
@@ -188,17 +205,21 @@ fn option_varint_uses_spare_tags() {
 #[test]
 fn option_fixint_keeps_its_tag() {
     // Every first byte is valid for a fixed-width integer or length.
-    check_with_config(&Some(7u32), &[1, 7, 0, 0, 0], config::legacy());
+    check_with_config(
+        &Some(7u32),
+        &[1, 7, 0, 0, 0],
+        config::legacy().with_niches(),
+    );
     check_with_config(
         &Some(7u32),
         &[1, 0, 0, 0, 7],
-        config::legacy().with_big_endian(),
+        config::legacy().with_niches().with_big_endian(),
     );
-    check_with_config(&None::<u32>, &[0], config::legacy());
+    check_with_config(&None::<u32>, &[0], config::legacy().with_niches());
     check_with_config(
         &Some(String::from("hi")),
         &[1, 2, 0, 0, 0, 0, 0, 0, 0, b'h', b'i'],
-        config::legacy(),
+        config::legacy().with_niches(),
     );
 }
 
@@ -228,22 +249,22 @@ fn option_length_prefixed_uses_spare_tags() {
 
     // `BinaryHeap` isn't `PartialEq`, so check it by hand.
     let heap = Some(BinaryHeap::from([7u8]));
-    let bytes = bincode::encode_to_vec(&heap, config::standard()).unwrap();
+    let bytes = bincode::encode_to_vec(&heap, config::standard().with_niches()).unwrap();
     assert_eq!(bytes, [1, 7]);
     let (decoded, _): (Option<BinaryHeap<u8>>, usize) =
-        bincode::decode_from_std_read(&mut &bytes[..], config::standard())
+        bincode::decode_from_std_read(&mut &bytes[..], config::standard().with_niches())
             .map(|v| (v, 0))
             .unwrap();
     assert_eq!(decoded.unwrap().into_vec(), [7]);
 
     // Borrowed slices and strings.
-    let bytes = bincode::encode_to_vec(Some("hi"), config::standard()).unwrap();
+    let bytes = bincode::encode_to_vec(Some("hi"), config::standard().with_niches()).unwrap();
     assert_eq!(bytes, [2, b'h', b'i']);
     let (decoded, _): (Option<&str>, usize) =
-        bincode::borrow_decode_from_slice(&bytes, config::standard()).unwrap();
+        bincode::borrow_decode_from_slice(&bytes, config::standard().with_niches()).unwrap();
     assert_eq!(decoded, Some("hi"));
     let (decoded, _): (Option<&str>, usize) =
-        bincode::borrow_decode_from_slice(&[254], config::standard()).unwrap();
+        bincode::borrow_decode_from_slice(&[254], config::standard().with_niches()).unwrap();
     assert_eq!(decoded, None);
 }
 
@@ -278,10 +299,18 @@ fn option_enum_uses_variant_index_niches() {
     check_varint(None::<SocketAddr>, &[2]);
 
     // Under fixed int encoding the index is four bytes. In little endian its low byte comes first.
-    check_with_config(&Some(Ok::<u8, u8>(1)), &[0, 0, 0, 0, 1], config::legacy());
-    check_with_config(&None::<Result<u8, u8>>, &[2], config::legacy());
+    check_with_config(
+        &Some(Ok::<u8, u8>(1)),
+        &[0, 0, 0, 0, 1],
+        config::legacy().with_niches(),
+    );
+    check_with_config(
+        &None::<Result<u8, u8>>,
+        &[2],
+        config::legacy().with_niches(),
+    );
     // In big endian its first byte is always zero.
-    let big_endian = config::legacy().with_big_endian();
+    let big_endian = config::legacy().with_niches().with_big_endian();
     check_with_config(&Some(Err::<u8, u8>(1)), &[0, 0, 0, 1, 1], big_endian);
     check_with_config(&None::<Result<u8, u8>>, &[1], big_endian);
     check_with_config(&Some(None::<Result<u8, u8>>), &[1], big_endian);
@@ -290,13 +319,15 @@ fn option_enum_uses_variant_index_niches() {
 
 #[test]
 fn unclaimed_niches_are_rejected() {
-    let err = bincode::decode_from_slice::<Option<bool>, _>(&[3], config::standard()).unwrap_err();
+    let err = bincode::decode_from_slice::<Option<bool>, _>(&[3], config::standard().with_niches())
+        .unwrap_err();
     assert!(
         matches!(err, DecodeError::UnexpectedNiche { found: 3, .. }),
         "{err:?}"
     );
 
-    let err = bincode::decode_from_slice::<Option<u8>, _>(&[2], config::standard()).unwrap_err();
+    let err = bincode::decode_from_slice::<Option<u8>, _>(&[2], config::standard().with_niches())
+        .unwrap_err();
     assert!(
         matches!(err, DecodeError::UnexpectedVariant { found: 2, .. }),
         "{err:?}"
@@ -318,9 +349,11 @@ fn niche_encoded_some_fits_the_same_limit_as_its_payload() {
     macro_rules! assert_same_limit {
         ($ty:ty, $value:expr, $limit:literal) => {{
             let value: $ty = $value;
-            let bytes = bincode::encode_to_vec(&value, config::standard()).unwrap();
-            let fits_at = config::standard().with_limit::<$limit>();
-            let too_small = config::standard().with_limit::<{ $limit - 1 }>();
+            let bytes = bincode::encode_to_vec(&value, config::standard().with_niches()).unwrap();
+            let fits_at = config::standard().with_niches().with_limit::<$limit>();
+            let too_small = config::standard()
+                .with_niches()
+                .with_limit::<{ $limit - 1 }>();
             assert!(fits::<$ty, _>(&bytes, fits_at), "{}", stringify!($ty));
             assert!(
                 fits::<Option<$ty>, _>(&bytes, fits_at),
@@ -347,14 +380,14 @@ fn niche_encoded_some_fits_the_same_limit_as_its_payload() {
 #[test]
 fn niches_respect_the_byte_limit() {
     // Before niches, `Some(n)` needed two bytes.
-    let one = config::standard().with_limit::<1>();
+    let one = config::standard().with_niches().with_limit::<1>();
     let (decoded, _): (Option<NonZeroU8>, usize) = bincode::decode_from_slice(&[7], one).unwrap();
     assert_eq!(decoded, NonZeroU8::new(7));
 
     let encoded = "é".as_bytes();
     let err = bincode::decode_from_slice::<Option<char>, _>(encoded, one).unwrap_err();
     assert!(matches!(err, DecodeError::LimitExceeded), "{err:?}");
-    let two = config::standard().with_limit::<2>();
+    let two = config::standard().with_niches().with_limit::<2>();
     let (decoded, _): (Option<char>, usize) = bincode::decode_from_slice(encoded, two).unwrap();
     assert_eq!(decoded, Some('é'));
 }
@@ -469,28 +502,31 @@ fn check_all_niches<C: Config>(config: C) {
 // Niche tables are constants, so they can be checked at compile time.
 const _: () = assert!(
     <Option<Option<bool>> as Encode>::ENCODE_NICHES
-        .get::<config::Configuration>()
+        .get::<config::Configuration<
+            config::LittleEndian,
+            config::Varint,
+            config::NoLimit,
+            config::UseNiches,
+        >>()
         .start()
         == 4
 );
 
 #[test]
 fn niches_are_consistent() {
-    check_all_niches(config::standard());
-    check_all_niches(config::standard().with_big_endian());
-    check_all_niches(config::legacy());
-    check_all_niches(config::legacy().with_big_endian());
+    check_all_niches(config::standard().with_niches());
+    check_all_niches(config::standard().with_niches().with_big_endian());
+    check_all_niches(config::legacy().with_niches());
+    check_all_niches(config::legacy().with_niches().with_big_endian());
 }
 
 #[derive(Encode, Decode, PartialEq, Debug)]
-#[bincode(niche)]
 struct Id {
     value: NonZeroU32,
     name: String,
 }
 
 #[derive(Encode, Decode, PartialEq, Debug)]
-#[bincode(niche)]
 struct SkipsFirstField {
     #[bincode(skip)]
     cache: u32,
@@ -499,39 +535,42 @@ struct SkipsFirstField {
 }
 
 #[derive(Encode, Decode, PartialEq, Debug)]
-#[bincode(niche)]
 struct Tuple(NonZeroU8, u8);
 
 #[derive(Encode, Decode, PartialEq, Debug)]
-#[bincode(niche)]
 struct Wrapper<T> {
     inner: T,
 }
 
 #[derive(Encode, Decode, PartialEq, Debug)]
-#[bincode(niche)]
 struct Outer {
     id: Id,
     extra: u8,
 }
 
 #[derive(Encode, Decode, PartialEq, Debug)]
-#[bincode(niche)]
 enum Color {
     Red,
     Green,
     Blue(u8),
 }
 
+/// A first field with a lifetime gives the struct no niches.
 #[derive(Encode, bincode::BorrowDecode, PartialEq, Debug)]
-#[bincode(niche)]
 struct Borrowed<'a> {
     name: &'a str,
     count: u8,
 }
 
-/// Without `#[bincode(niche)]`, a derived type declares no niches.
+#[derive(Encode, bincode::BorrowDecode, PartialEq, Debug)]
+struct BorrowedSecond<'a> {
+    count: NonZeroU8,
+    name: &'a str,
+}
+
+/// With `#[bincode(no_niche)]`, a derived type declares no niches.
 #[derive(Encode, Decode, PartialEq, Debug)]
+#[bincode(no_niche)]
 struct Plain {
     flag: bool,
 }
@@ -581,28 +620,74 @@ fn derived_enums_take_their_unused_variant_indices() {
     check_varint(None::<Color>, &[3]);
     check_varint(Some(None::<Color>), &[3]);
     check_varint(None::<Option<Color>>, &[4]);
-    check_with_config(&Some(Color::Green), &[1, 0, 0, 0], config::legacy());
-    check_with_config(&None::<Color>, &[3], config::legacy());
-    check_with_config(&None::<Color>, &[1], config::legacy().with_big_endian());
+    check_with_config(
+        &Some(Color::Green),
+        &[1, 0, 0, 0],
+        config::legacy().with_niches(),
+    );
+    check_with_config(&None::<Color>, &[3], config::legacy().with_niches());
+    check_with_config(
+        &None::<Color>,
+        &[1],
+        config::legacy().with_niches().with_big_endian(),
+    );
 }
 
 #[test]
-fn derived_borrow_decode_takes_first_field_niches() {
+fn derived_borrow_decode() {
+    let config = config::standard().with_niches();
+
+    let value = Some(BorrowedSecond {
+        count: NonZeroU8::new(3).unwrap(),
+        name: "x",
+    });
+    let bytes = bincode::encode_to_vec(&value, config).unwrap();
+    assert_eq!(bytes, [3, 1, b'x']);
+    let (decoded, _): (Option<BorrowedSecond>, usize) =
+        bincode::borrow_decode_from_slice(&bytes, config).unwrap();
+    assert_eq!(decoded, value);
+    let (decoded, _): (Option<BorrowedSecond>, usize) =
+        bincode::borrow_decode_from_slice(&[0], config).unwrap();
+    assert_eq!(decoded, None);
+
     let value = Some(Borrowed {
         name: "x",
         count: 3,
     });
-    let bytes = bincode::encode_to_vec(&value, config::standard()).unwrap();
-    assert_eq!(bytes, [1, b'x', 3]);
+    let bytes = bincode::encode_to_vec(&value, config).unwrap();
+    assert_eq!(bytes, [1, 1, b'x', 3]);
     let (decoded, _): (Option<Borrowed>, usize) =
-        bincode::borrow_decode_from_slice(&bytes, config::standard()).unwrap();
+        bincode::borrow_decode_from_slice(&bytes, config).unwrap();
     assert_eq!(decoded, value);
+    assert_eq!(
+        bincode::encode_to_vec(None::<Borrowed>, config).unwrap(),
+        [0]
+    );
 
-    let bytes = bincode::encode_to_vec(None::<Borrowed>, config::standard()).unwrap();
-    assert_eq!(bytes, [254]);
-    let (decoded, _): (Option<Borrowed>, usize) =
-        bincode::borrow_decode_from_slice(&bytes, config::standard()).unwrap();
-    assert_eq!(decoded, None);
+    fn check_borrowed_niches<C: Config>() {
+        assert_eq!(<Borrowed as Encode>::ENCODE_NICHES.get::<C>(), Niches::NONE);
+        assert_eq!(
+            <Borrowed as BorrowDecode<'_, ()>>::BORROW_DECODE_NICHES.get::<C>(),
+            Niches::NONE
+        );
+        let expected = Niches::range(0, 0);
+        assert_eq!(
+            <BorrowedSecond as Encode>::ENCODE_NICHES.get::<C>(),
+            expected
+        );
+        assert_eq!(
+            <BorrowedSecond as BorrowDecode<'_, ()>>::BORROW_DECODE_NICHES.get::<C>(),
+            expected
+        );
+    }
+    check_borrowed_niches::<
+        config::Configuration<
+            config::LittleEndian,
+            config::Varint,
+            config::NoLimit,
+            config::UseNiches,
+        >,
+    >();
 }
 
 fn check_derived_niches<C: Config>(config: C) {
@@ -619,8 +704,116 @@ fn check_derived_niches<C: Config>(config: C) {
 
 #[test]
 fn derived_niches_are_consistent() {
-    check_derived_niches(config::standard());
-    check_derived_niches(config::standard().with_big_endian());
-    check_derived_niches(config::legacy());
-    check_derived_niches(config::legacy().with_big_endian());
+    check_derived_niches(config::standard().with_niches());
+    check_derived_niches(config::standard().with_niches().with_big_endian());
+    check_derived_niches(config::legacy().with_niches());
+    check_derived_niches(config::legacy().with_niches().with_big_endian());
+}
+
+/// A struct whose first field contains itself must opt out, or its niches would depend on
+/// themselves.
+#[derive(Encode, Decode, PartialEq, Debug)]
+#[bincode(no_niche)]
+struct Node {
+    next: Option<Box<Node>>,
+    value: u8,
+}
+
+/// The niches of a `Vec` don't depend on its elements, so this needs no opt-out.
+#[derive(Encode, Decode, PartialEq, Debug)]
+struct Tree {
+    children: Vec<Tree>,
+    value: u8,
+}
+
+#[test]
+fn recursive_types() {
+    let node = Node {
+        next: Some(Box::new(Node {
+            next: None,
+            value: 2,
+        })),
+        value: 1,
+    };
+    // The inner option's payload is `Box<Node>`, which has no niches, so it keeps its tag.
+    check(Some(node), &[1, 1, 0, 2, 1]);
+
+    let tree = Tree {
+        children: vec![Tree {
+            children: Vec::new(),
+            value: 2,
+        }],
+        value: 1,
+    };
+    check_varint(Some(tree), &[1, 0, 2, 1]);
+    check_varint(None::<Tree>, &[254]);
+}
+
+#[test]
+fn default_configs_do_not_use_niches() {
+    // Without `with_niches`, every option writes a tag, exactly as before niches existed.
+    fn check_varint_config<C: Config>(config: C) {
+        assert_eq!(
+            bincode::encode_to_vec(NonZeroU8::new(5), config).unwrap(),
+            [1, 5]
+        );
+        assert_eq!(
+            bincode::encode_to_vec(None::<NonZeroU8>, config).unwrap(),
+            [0]
+        );
+        assert_eq!(bincode::encode_to_vec(None::<bool>, config).unwrap(), [0]);
+        assert_eq!(bincode::encode_to_vec(Some(7u32), config).unwrap(), [1, 7]);
+        assert_eq!(
+            bincode::encode_to_vec(Some("hi"), config).unwrap(),
+            [1, 2, b'h', b'i']
+        );
+        assert_eq!(bincode::encode_to_vec(None::<Color>, config).unwrap(), [0]);
+        assert_eq!(
+            bincode::encode_to_vec(Some(Color::Red), config).unwrap(),
+            [1, 0]
+        );
+    }
+    check_varint_config(config::standard());
+    check_varint_config(config::standard().with_big_endian());
+    let legacy = config::legacy();
+    assert_eq!(
+        bincode::encode_to_vec(NonZeroU8::new(5), legacy).unwrap(),
+        [1, 5]
+    );
+    assert_eq!(
+        bincode::encode_to_vec(Some(Ok::<u8, u8>(1)), legacy).unwrap(),
+        [1, 0, 0, 0, 0, 1]
+    );
+
+    fn assert_no_niches<T: Encode + Decode<()> + for<'de> BorrowDecode<'de, ()>, C: Config>() {
+        let name = core::any::type_name::<T>();
+        assert_eq!(
+            <T as Encode>::ENCODE_NICHES.get::<C>(),
+            Niches::NONE,
+            "{name}"
+        );
+        assert_eq!(
+            <T as Decode<()>>::DECODE_NICHES.get::<C>(),
+            Niches::NONE,
+            "{name}"
+        );
+        assert_eq!(
+            <T as BorrowDecode<'_, ()>>::BORROW_DECODE_NICHES.get::<C>(),
+            Niches::NONE,
+            "{name}"
+        );
+    }
+    fn check_config<C: Config>(_: C) {
+        assert_no_niches::<bool, C>();
+        assert_no_niches::<NonZeroU8, C>();
+        assert_no_niches::<char, C>();
+        assert_no_niches::<u32, C>();
+        assert_no_niches::<String, C>();
+        assert_no_niches::<Option<u8>, C>();
+        assert_no_niches::<Result<u8, u8>, C>();
+        assert_no_niches::<Id, C>();
+        assert_no_niches::<Color, C>();
+    }
+    check_config(config::standard());
+    check_config(config::legacy());
 }

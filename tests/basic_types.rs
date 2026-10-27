@@ -180,8 +180,7 @@ fn test_option_slice() {
     let mut buffer = [0u8; 32];
     let input: Option<&[u8]> = Some(&[1, 2, 3, 4, 5, 6, 7]);
     let n = bincode::encode_into_slice(input, &mut buffer, bincode::config::standard()).unwrap();
-    // `None` takes an unused varint tag of the length prefix, so `Some` needs no tag.
-    assert_eq!(&buffer[..n], &[7, 1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(&buffer[..n], &[1, 7, 1, 2, 3, 4, 5, 6, 7]);
 
     let (output, len): (Option<&[u8]>, usize) =
         bincode::borrow_decode_from_slice(&buffer[..n], bincode::config::standard()).unwrap();
@@ -191,7 +190,7 @@ fn test_option_slice() {
     let mut buffer = [0u8; 32];
     let input: Option<&[u8]> = None;
     let n = bincode::encode_into_slice(input, &mut buffer, bincode::config::standard()).unwrap();
-    assert_eq!(&buffer[..n], &[254]);
+    assert_eq!(&buffer[..n], &[0]);
 
     let (output, len): (Option<&[u8]>, usize) =
         bincode::borrow_decode_from_slice(&buffer[..n], bincode::config::standard()).unwrap();
@@ -220,10 +219,9 @@ fn test_option_str() {
     let mut buffer = [0u8; 32];
     let input: Option<&str> = Some("Hello world");
     let n = bincode::encode_into_slice(input, &mut buffer, bincode::config::standard()).unwrap();
-    // `None` takes an unused varint tag of the length prefix, so `Some` needs no tag.
     assert_eq!(
         &buffer[..n],
-        &[11, 72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]
+        &[1, 11, 72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]
     );
 
     let (output, len): (Option<&str>, usize) =
@@ -234,7 +232,7 @@ fn test_option_str() {
     let mut buffer = [0u8; 32];
     let input: Option<&str> = None;
     let n = bincode::encode_into_slice(input, &mut buffer, bincode::config::standard()).unwrap();
-    assert_eq!(&buffer[..n], &[254]);
+    assert_eq!(&buffer[..n], &[0]);
 
     let (output, len): (Option<&str>, usize) =
         bincode::borrow_decode_from_slice(&buffer[..n], bincode::config::standard()).unwrap();

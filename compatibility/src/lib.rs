@@ -113,36 +113,6 @@ where
     );
 }
 
-/// Like [test_same], but only with fixed int encoding.
-///
-/// Under variable int encoding, an `Option` whose payload starts with a varint (an integer, a
-/// string, a collection) encodes `None` as one of the varint's unused tags instead of writing a
-/// tag of its own, so it no longer matches bincode 1.
-pub fn test_same_fixint<T>(t: T)
-where
-    T: bincode_2::Encode
-        + bincode_2::Decode<()>
-        + serde::Serialize
-        + serde::de::DeserializeOwned
-        + core::fmt::Debug
-        + PartialEq,
-{
-    test_same_with_config(
-        &t,
-        bincode_1::options().with_fixint_encoding(),
-        bincode_2::config::legacy(),
-    );
-    test_same_with_config(
-        &t,
-        bincode_1::options()
-            .with_big_endian()
-            .with_fixint_encoding(),
-        bincode_2::config::legacy()
-            .with_big_endian()
-            .with_fixed_int_encoding(),
-    );
-}
-
 pub fn gen_string(rng: &mut impl Rng) -> String {
     let len = rng.gen_range(0..100usize);
     let mut result = String::with_capacity(len * 4);

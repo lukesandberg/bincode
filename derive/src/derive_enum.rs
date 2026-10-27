@@ -9,15 +9,13 @@ pub(crate) struct DeriveEnum {
 }
 
 impl DeriveEnum {
-    /// With `#[bincode(niche)]`, the number of variants, whose unused indices are the niches.
-    fn niche_variant_count(&self) -> Result<Option<usize>> {
-        match &self.attributes.niche {
-            None => Ok(None),
-            Some(niche) if self.variants.is_empty() => Err(Error::custom_at(
-                "`niche` takes the unused variant indices of an enum, but this enum has no variants",
-                niche.span(),
-            )),
-            Some(_) => Ok(Some(self.variants.len())),
+    /// The number of variants, whose unused indices are the enum's niches, or `None` if the enum
+    /// has no variants or has `#[bincode(no_niche)]`.
+    fn niche_variant_count(&self) -> Option<usize> {
+        if self.attributes.no_niche || self.variants.is_empty() {
+            None
+        } else {
+            Some(self.variants.len())
         }
     }
 
@@ -206,7 +204,7 @@ impl DeriveEnum {
                 })?;
                 Ok(())
             })?;
-        if let Some(variant_count) = self.niche_variant_count()? {
+        if let Some(variant_count) = self.niche_variant_count() {
             impl_for
                 .generate_const(
                     "ENCODE_NICHES",
@@ -315,7 +313,7 @@ impl DeriveEnum {
 
         let enum_name = generator.target_name().to_string();
 
-        let niche_variant_count = self.niche_variant_count()?;
+        let niche_variant_count = self.niche_variant_count();
         {
             let mut impl_for = generator.impl_for(format!("{}::Decode", crate_name));
 
@@ -508,7 +506,7 @@ impl DeriveEnum {
         // Remember to keep this mostly in sync with generate_decode
         let enum_name = generator.target_name().to_string();
 
-        let niche_variant_count = self.niche_variant_count()?;
+        let niche_variant_count = self.niche_variant_count();
         let mut impl_for = generator
             .impl_for_with_lifetimes(format!("{}::BorrowDecode", crate_name), ["__de"])
             .with_trait_generics([decode_context]);

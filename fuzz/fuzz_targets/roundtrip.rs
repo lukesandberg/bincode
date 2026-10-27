@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 #[derive(bincode::Decode, bincode::Encode, PartialEq, Debug)]
-#[bincode(niche)]
 enum AllTypes {
     BTreeMap(BTreeMap<u8, u8>),
     HashMap(HashMap<u8, u8>),
@@ -56,14 +55,12 @@ enum AllTypes {
 }
 
 #[derive(bincode::Decode, bincode::Encode, PartialEq, Debug)]
-#[bincode(niche)]
 struct NicheStruct {
     first: Option<String>,
     second: u8,
 }
 
-fuzz_target!(|data: &[u8]| {
-    let config = bincode::config::standard().with_limit::<1024>();
+fn roundtrip<C: bincode::config::Config>(data: &[u8], config: C) {
     let result: Result<(AllTypes, _), _> = bincode::decode_from_slice(data, config);
 
     if let Ok((before, _)) = result {
@@ -71,4 +68,10 @@ fuzz_target!(|data: &[u8]| {
         let (after, _) = bincode::decode_from_slice(&encoded, config).unwrap();
         assert_eq!(before, after);
     }
+}
+
+fuzz_target!(|data: &[u8]| {
+    let config = bincode::config::standard().with_limit::<1024>();
+    roundtrip(data, config);
+    roundtrip(data, config.with_niches());
 });

@@ -1,19 +1,32 @@
 //! Niches: first-byte values that a type's encoding never begins with.
 //!
 //! A wrapper type can use a niche of its payload in place of a separate tag. For example,
-//! [`NonZeroU8`](core::num::NonZeroU8) never encodes as `0x00`, so `Option<NonZeroU8>` encodes
+//! [`NonZeroU8`](core::num::NonZeroU8) never encodes as `0x00`, so `Option<NonZeroU8>` can encode
 //! `None` as `0x00` and `Some(n)` as `n` alone, instead of a tag byte followed by the payload.
+//!
+//! This is opt-in: options only use niches with
+//! [`Configuration::with_niches`](crate::config::Configuration::with_niches), and otherwise write
+//! a tag as usual.
+//!
+//! ```
+//! use core::num::NonZeroU8;
+//!
+//! let value = NonZeroU8::new(5);
+//! let config = bincode::config::standard();
+//! assert_eq!(bincode::encode_to_vec(value, config).unwrap(), [1, 5]);
+//! assert_eq!(bincode::encode_to_vec(value, config.with_niches()).unwrap(), [5]);
+//! ```
 //!
 //! Types declare their niches with [`Encode::ENCODE_NICHES`], [`Decode::DECODE_NICHES`] and
 //! [`BorrowDecode::BORROW_DECODE_NICHES`], all of which default to [`NicheTable::NONE`].
 //!
 //! # Deriving
 //!
-//! Derived types declare no niches unless they opt in with `#[bincode(niche)]`. Opting in changes
-//! how `Option`s of the type are encoded.
+//! Derived types declare niches automatically:
 //!
-//! - A struct takes the niches of its first encoded field: fields with `#[bincode(skip)]` don't
-//!   count, and the field must not use `with` or `with_serde`.
+//! - A struct takes the niches of its first encoded field, skipping fields with
+//!   `#[bincode(skip)]`. If that field uses `with` or `with_serde`, or its type has a lifetime
+//!   (like `&'a str` or `Cow<'a, str>`), the struct has no niches.
 //! - An enum takes the variant indices it doesn't use, see [`NicheTable::variant_index`].
 //!
 //! ```
@@ -21,17 +34,15 @@
 //! use core::num::NonZeroU32;
 //!
 //! #[derive(bincode::Encode, bincode::Decode)]
-//! #[bincode(niche)]
 //! struct UserId(NonZeroU32);
 //!
 //! #[derive(bincode::Encode, bincode::Decode)]
-//! #[bincode(niche)]
 //! enum Status {
 //!     Active,
 //!     Suspended { days: u32 },
 //! }
 //!
-//! let config = bincode::config::standard();
+//! let config = bincode::config::standard().with_niches();
 //! let user = Some(UserId(NonZeroU32::new(7).unwrap()));
 //! assert_eq!(bincode::encode_to_vec(user, config).unwrap(), [7]);
 //! assert_eq!(bincode::encode_to_vec(None::<UserId>, config).unwrap(), [253]);
@@ -39,16 +50,27 @@
 //! # }
 //! ```
 //!
-//! A struct with no encoded fields has no niches to take, so `#[bincode(niche)]` is an error:
+//! Add `#[bincode(no_niche)]` to a type to declare no niches. A struct needs it when its first
+//! field leads back to the struct, like `next: Option<Box<Self>>`, since its niches would depend
+//! on themselves; the compiler reports this as a cycle when evaluating `ENCODE_NICHES`.
+//! Collections are fine: a `Vec`'s niches come from its length, not its elements.
 //!
-//! ```compile_fail
-//! #[derive(bincode::Encode)]
-//! #[bincode(niche)]
-//! struct Empty;
 //! ```
+//! # #[cfg(feature = "derive")] {
+//! #[derive(bincode::Encode, bincode::Decode)]
+//! #[bincode(no_niche)]
+//! struct Node {
+//!     next: Option<Box<Node>>,
+//!     value: u8,
+//! }
 //!
-//! The first field also can't contain the type itself, like `next: Option<Box<Self>>`, since its
-//! niches would depend on themselves.
+//! #[derive(bincode::Encode, bincode::Decode)]
+//! struct Tree {
+//!     children: Vec<Tree>,
+//!     value: u8,
+//! }
+//! # }
+//! ```
 //!
 //! [`Encode::ENCODE_NICHES`]: crate::Encode::ENCODE_NICHES
 //! [`Decode::DECODE_NICHES`]: crate::Decode::DECODE_NICHES
@@ -230,9 +252,13 @@ impl NicheTable {
         NicheTable::new(varint, fixint_little_endian, fixint_big_endian)
     }
 
-    /// The niches under config `C`.
+    /// The niches under config `C`, or none unless `C` uses niches (see
+    /// [`Configuration::with_niches`](crate::config::Configuration::with_niches)).
     #[inline]
     pub const fn get<C: Config>(self) -> Niches {
+        if !C::USE_NICHES {
+            return Niches::NONE;
+        }
         match C::INT_ENCODING {
             IntEncoding::Variable => self.varint,
             IntEncoding::Fixed => match C::ENDIAN {
@@ -282,52 +308,42 @@ fn test_niches() {
     assert_eq!(zero.option(), Niches::NONE);
 }
 
+#[cfg(test)]
+mod configs {
+    use crate::config::{
+        BigEndian, Configuration, Fixint, LittleEndian, NoLimit, UseNiches, Varint,
+    };
+    pub type VarintLe = Configuration<LittleEndian, Varint, NoLimit, UseNiches>;
+    pub type VarintBe = Configuration<BigEndian, Varint, NoLimit, UseNiches>;
+    pub type FixintLe = Configuration<LittleEndian, Fixint, NoLimit, UseNiches>;
+    pub type FixintBe = Configuration<BigEndian, Fixint, NoLimit, UseNiches>;
+}
+
 #[test]
 fn test_niche_table() {
-    use crate::config;
+    use configs::*;
 
     let table = NicheTable::new(
         Niches::range(250, 255),
         Niches::range(10, 255),
         Niches::range(1, 255),
     );
-    assert_eq!(
-        table.get::<config::Configuration>(),
-        Niches::range(250, 255)
-    );
-    assert_eq!(
-        table.get::<config::Configuration<config::BigEndian>>(),
-        Niches::range(250, 255)
-    );
-    assert_eq!(
-        table.get::<config::Configuration<config::LittleEndian, config::Fixint>>(),
-        Niches::range(10, 255)
-    );
-    assert_eq!(
-        table.get::<config::Configuration<config::BigEndian, config::Fixint>>(),
-        Niches::range(1, 255)
-    );
+    assert_eq!(table.get::<VarintLe>(), Niches::range(250, 255));
+    assert_eq!(table.get::<VarintBe>(), Niches::range(250, 255));
+    assert_eq!(table.get::<FixintLe>(), Niches::range(10, 255));
+    assert_eq!(table.get::<FixintBe>(), Niches::range(1, 255));
+    // Configs that don't use niches never see any.
+    assert_eq!(table.get::<crate::config::Configuration>(), Niches::NONE);
 
     let varint = NicheTable::varint_only(Niches::range(255, 255));
-    assert_eq!(
-        varint.get::<config::Configuration<config::LittleEndian, config::Fixint>>(),
-        Niches::NONE
-    );
-    assert_eq!(
-        varint
-            .option()
-            .get::<config::Configuration<config::LittleEndian, config::Fixint>>(),
-        Niches::range(2, 255)
-    );
-    assert_eq!(varint.option().get::<config::Configuration>(), Niches::NONE);
+    assert_eq!(varint.get::<FixintLe>(), Niches::NONE);
+    assert_eq!(varint.option().get::<FixintLe>(), Niches::range(2, 255));
+    assert_eq!(varint.option().get::<VarintLe>(), Niches::NONE);
 }
 
 #[test]
 fn test_variant_index() {
-    use crate::config::{BigEndian, Configuration, Fixint, LittleEndian};
-    type Varint = Configuration;
-    type FixintLe = Configuration<LittleEndian, Fixint>;
-    type FixintBe = Configuration<BigEndian, Fixint>;
+    use configs::{FixintBe, FixintLe, VarintLe as Varint};
 
     assert_eq!(NicheTable::variant_index(0), NicheTable::NONE);
 

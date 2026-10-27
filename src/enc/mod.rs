@@ -53,8 +53,10 @@ pub trait Encode {
 
     /// The first-byte values that [`encode`](Encode::encode) never writes, under each config.
     ///
-    /// Wrappers use these in place of a tag: if `T` has niches, `Option<T>` encodes `None` as the
-    /// first niche byte and `Some(v)` as `v` alone. See the [niche](crate::niche) module.
+    /// Wrappers use these in place of a tag: if `T` has niches and the config uses them (see
+    /// [`Configuration::with_niches`](crate::config::Configuration::with_niches)), `Option<T>`
+    /// encodes `None` as the first niche byte and `Some(v)` as `v` alone. See the
+    /// [niche](crate::niche) module.
     ///
     /// This must agree with [`Decode::DECODE_NICHES`](crate::Decode::DECODE_NICHES), and no niche
     /// byte may ever begin a valid encoding of `Self`. The default is [`NicheTable::NONE`].
