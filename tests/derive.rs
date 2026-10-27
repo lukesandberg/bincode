@@ -121,11 +121,11 @@ fn test_encode_decode_str() {
     let mut slice = [0u8; 100];
 
     let len = bincode::encode_into_slice(&start, &mut slice, bincode::config::standard()).unwrap();
-    assert_eq!(len, 22);
+    assert_eq!(len, 21);
     let (end, len): (Test3, usize) =
         bincode::borrow_decode_from_slice(&slice[..len], bincode::config::standard()).unwrap();
     assert_eq!(end, Test3 { e: None, ..start });
-    assert_eq!(len, 22);
+    assert_eq!(len, 21);
 }
 
 #[derive(bincode::Encode, bincode::Decode, PartialEq, Debug, Eq)]

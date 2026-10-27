@@ -417,3 +417,14 @@ pub(crate) fn decode_slice_len<D: Decoder>(decoder: &mut D) -> Result<usize, Dec
 
     v.try_into().map_err(|_| DecodeError::OutsideUsizeRange(v))
 }
+
+/// Decodes the length of any slice, container, etc whose first byte has already been read
+#[inline]
+pub(crate) fn decode_slice_len_with_first_byte<D: Decoder>(
+    first: u8,
+    decoder: &mut D,
+) -> Result<usize, DecodeError> {
+    let v = u64::decode_with_first_byte(first, decoder)?;
+
+    v.try_into().map_err(|_| DecodeError::OutsideUsizeRange(v))
+}

@@ -7,7 +7,7 @@ use crate::{
     },
     error::{DecodeError, EncodeError},
     impl_borrow_decode,
-    niche::NicheTable,
+    niche::{NicheTable, SLICE_LEN_NICHES},
     BorrowDecode, Config,
 };
 use alloc::{
@@ -72,6 +72,15 @@ where
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         Ok(Vec::<T>::decode(decoder)?.into())
     }
+
+    const DECODE_NICHES: NicheTable = <Vec<T> as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Vec::<T>::decode_with_first_byte(first, decoder)?.into())
+    }
 }
 impl<'de, T, Context> BorrowDecode<'de, Context> for BinaryHeap<T>
 where
@@ -81,6 +90,16 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         Ok(Vec::<T>::borrow_decode(decoder)?.into())
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable =
+        <Vec<T> as BorrowDecode<'de, Context>>::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Vec::<T>::borrow_decode_with_first_byte(first, decoder)?.into())
     }
 }
 
@@ -96,6 +115,8 @@ where
         }
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<Context, K, V> Decode<Context> for BTreeMap<K, V>
@@ -105,19 +126,41 @@ where
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
-        decoder.claim_container_read::<(K, V)>(len)?;
-
-        let mut map = BTreeMap::new();
-        for _ in 0..len {
-            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-            decoder.unclaim_bytes_read(core::mem::size_of::<(K, V)>());
-
-            let key = K::decode(decoder)?;
-            let value = V::decode(decoder)?;
-            map.insert(key, value);
-        }
-        Ok(map)
+        decode_btree_map_elements(len, decoder)
     }
+
+    const DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        decode_btree_map_elements(len, decoder)
+    }
+}
+
+/// Decodes the elements of a `BTreeMap<K, V>` that follow its length.
+fn decode_btree_map_elements<Context, K, V, D: Decoder<Context = Context>>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<BTreeMap<K, V>, DecodeError>
+where
+    K: Decode<Context> + Ord,
+    V: Decode<Context>,
+{
+    decoder.claim_container_read::<(K, V)>(len)?;
+
+    let mut map = BTreeMap::new();
+    for _ in 0..len {
+        // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+        decoder.unclaim_bytes_read(core::mem::size_of::<(K, V)>());
+
+        let key = K::decode(decoder)?;
+        let value = V::decode(decoder)?;
+        map.insert(key, value);
+    }
+    Ok(map)
 }
 impl<'de, K, V, Context> BorrowDecode<'de, Context> for BTreeMap<K, V>
 where
@@ -128,19 +171,41 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
-        decoder.claim_container_read::<(K, V)>(len)?;
-
-        let mut map = BTreeMap::new();
-        for _ in 0..len {
-            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-            decoder.unclaim_bytes_read(core::mem::size_of::<(K, V)>());
-
-            let key = K::borrow_decode(decoder)?;
-            let value = V::borrow_decode(decoder)?;
-            map.insert(key, value);
-        }
-        Ok(map)
+        borrow_decode_btree_map_elements(len, decoder)
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        borrow_decode_btree_map_elements(len, decoder)
+    }
+}
+
+/// Decodes the elements of a `BTreeMap<K, V>` that follow its length.
+fn borrow_decode_btree_map_elements<'de, K, V, Context, D: BorrowDecoder<'de, Context = Context>>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<BTreeMap<K, V>, DecodeError>
+where
+    K: BorrowDecode<'de, Context> + Ord,
+    V: BorrowDecode<'de, Context>,
+{
+    decoder.claim_container_read::<(K, V)>(len)?;
+
+    let mut map = BTreeMap::new();
+    for _ in 0..len {
+        // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+        decoder.unclaim_bytes_read(core::mem::size_of::<(K, V)>());
+
+        let key = K::borrow_decode(decoder)?;
+        let value = V::borrow_decode(decoder)?;
+        map.insert(key, value);
+    }
+    Ok(map)
 }
 
 impl<K, V> Encode for BTreeMap<K, V>
@@ -156,6 +221,8 @@ where
         }
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<Context, T> Decode<Context> for BTreeSet<T>
@@ -164,18 +231,39 @@ where
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
-        decoder.claim_container_read::<T>(len)?;
-
-        let mut map = BTreeSet::new();
-        for _ in 0..len {
-            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-            decoder.unclaim_bytes_read(core::mem::size_of::<T>());
-
-            let key = T::decode(decoder)?;
-            map.insert(key);
-        }
-        Ok(map)
+        decode_btree_set_elements(len, decoder)
     }
+
+    const DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        decode_btree_set_elements(len, decoder)
+    }
+}
+
+/// Decodes the elements of a `BTreeSet<T>` that follow its length.
+fn decode_btree_set_elements<Context, T, D: Decoder<Context = Context>>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<BTreeSet<T>, DecodeError>
+where
+    T: Decode<Context> + Ord,
+{
+    decoder.claim_container_read::<T>(len)?;
+
+    let mut map = BTreeSet::new();
+    for _ in 0..len {
+        // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+        decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+
+        let key = T::decode(decoder)?;
+        map.insert(key);
+    }
+    Ok(map)
 }
 impl<'de, T, Context> BorrowDecode<'de, Context> for BTreeSet<T>
 where
@@ -185,18 +273,39 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
-        decoder.claim_container_read::<T>(len)?;
-
-        let mut map = BTreeSet::new();
-        for _ in 0..len {
-            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-            decoder.unclaim_bytes_read(core::mem::size_of::<T>());
-
-            let key = T::borrow_decode(decoder)?;
-            map.insert(key);
-        }
-        Ok(map)
+        borrow_decode_btree_set_elements(len, decoder)
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        borrow_decode_btree_set_elements(len, decoder)
+    }
+}
+
+/// Decodes the elements of a `BTreeSet<T>` that follow its length.
+fn borrow_decode_btree_set_elements<'de, T, Context, D: BorrowDecoder<'de, Context = Context>>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<BTreeSet<T>, DecodeError>
+where
+    T: BorrowDecode<'de, Context> + Ord,
+{
+    decoder.claim_container_read::<T>(len)?;
+
+    let mut map = BTreeSet::new();
+    for _ in 0..len {
+        // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+        decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+
+        let key = T::borrow_decode(decoder)?;
+        map.insert(key);
+    }
+    Ok(map)
 }
 
 impl<T> Encode for BTreeSet<T>
@@ -210,6 +319,8 @@ where
         }
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<Context, T> Decode<Context> for VecDeque<T>
@@ -218,6 +329,15 @@ where
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         Ok(Vec::<T>::decode(decoder)?.into())
+    }
+
+    const DECODE_NICHES: NicheTable = <Vec<T> as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Vec::<T>::decode_with_first_byte(first, decoder)?.into())
     }
 }
 impl<'de, T, Context> BorrowDecode<'de, Context> for VecDeque<T>
@@ -228,6 +348,16 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         Ok(Vec::<T>::borrow_decode(decoder)?.into())
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable =
+        <Vec<T> as BorrowDecode<'de, Context>>::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        Ok(Vec::<T>::borrow_decode_with_first_byte(first, decoder)?.into())
     }
 }
 
@@ -256,6 +386,8 @@ where
         }
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<Context, T> Decode<Context> for Vec<T>
@@ -264,26 +396,46 @@ where
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
+        decode_vec_elements(len, decoder)
+    }
 
-        if unty::type_equal::<T, u8>() {
-            decoder.claim_container_read::<T>(len)?;
-            // optimize for reading u8 vecs
-            let mut vec = alloc::vec![0u8; len];
-            decoder.reader().read(&mut vec)?;
-            // Safety: Vec<T> is Vec<u8>
-            Ok(unsafe { core::mem::transmute::<Vec<u8>, Vec<T>>(vec) })
-        } else {
-            decoder.claim_container_read::<T>(len)?;
+    const DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 
-            let mut vec = Vec::with_capacity(len);
-            for _ in 0..len {
-                // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-                decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        decode_vec_elements(len, decoder)
+    }
+}
 
-                vec.push(T::decode(decoder)?);
-            }
-            Ok(vec)
+/// Decodes the elements of a `Vec<T>` that follow its length.
+fn decode_vec_elements<Context, T, D: Decoder<Context = Context>>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<Vec<T>, DecodeError>
+where
+    T: Decode<Context>,
+{
+    if unty::type_equal::<T, u8>() {
+        decoder.claim_container_read::<T>(len)?;
+        // optimize for reading u8 vecs
+        let mut vec = alloc::vec![0u8; len];
+        decoder.reader().read(&mut vec)?;
+        // Safety: Vec<T> is Vec<u8>
+        Ok(unsafe { core::mem::transmute::<Vec<u8>, Vec<T>>(vec) })
+    } else {
+        decoder.claim_container_read::<T>(len)?;
+
+        let mut vec = Vec::with_capacity(len);
+        for _ in 0..len {
+            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+            decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+
+            vec.push(T::decode(decoder)?);
         }
+        Ok(vec)
     }
 }
 
@@ -295,26 +447,46 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
+        borrow_decode_vec_elements(len, decoder)
+    }
 
-        if unty::type_equal::<T, u8>() {
-            decoder.claim_container_read::<T>(len)?;
-            // optimize for reading u8 vecs
-            let mut vec = alloc::vec![0u8; len];
-            decoder.reader().read(&mut vec)?;
-            // Safety: Vec<T> is Vec<u8>
-            Ok(unsafe { core::mem::transmute::<Vec<u8>, Vec<T>>(vec) })
-        } else {
-            decoder.claim_container_read::<T>(len)?;
+    const BORROW_DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 
-            let mut vec = Vec::with_capacity(len);
-            for _ in 0..len {
-                // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-                decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        borrow_decode_vec_elements(len, decoder)
+    }
+}
 
-                vec.push(T::borrow_decode(decoder)?);
-            }
-            Ok(vec)
+/// Decodes the elements of a `Vec<T>` that follow its length.
+fn borrow_decode_vec_elements<'de, T, Context, D: BorrowDecoder<'de, Context = Context>>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<Vec<T>, DecodeError>
+where
+    T: BorrowDecode<'de, Context>,
+{
+    if unty::type_equal::<T, u8>() {
+        decoder.claim_container_read::<T>(len)?;
+        // optimize for reading u8 vecs
+        let mut vec = alloc::vec![0u8; len];
+        decoder.reader().read(&mut vec)?;
+        // Safety: Vec<T> is Vec<u8>
+        Ok(unsafe { core::mem::transmute::<Vec<u8>, Vec<T>>(vec) })
+    } else {
+        decoder.claim_container_read::<T>(len)?;
+
+        let mut vec = Vec::with_capacity(len);
+        for _ in 0..len {
+            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+            decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+
+            vec.push(T::borrow_decode(decoder)?);
         }
+        Ok(vec)
     }
 }
 
@@ -336,11 +508,25 @@ where
             Ok(())
         }
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<Context> Decode<Context> for String {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let bytes = Vec::<u8>::decode(decoder)?;
+        String::from_utf8(bytes).map_err(|e| DecodeError::Utf8 {
+            inner: e.utf8_error(),
+        })
+    }
+
+    const DECODE_NICHES: NicheTable = <Vec<u8> as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let bytes = Vec::<u8>::decode_with_first_byte(first, decoder)?;
         String::from_utf8(bytes).map_err(|e| DecodeError::Utf8 {
             inner: e.utf8_error(),
         })
@@ -352,6 +538,15 @@ impl<Context> Decode<Context> for Box<str> {
     fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, DecodeError> {
         String::decode(decoder).map(String::into_boxed_str)
     }
+
+    const DECODE_NICHES: NicheTable = <String as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        String::decode_with_first_byte(first, decoder).map(String::into_boxed_str)
+    }
 }
 impl_borrow_decode!(Box<str>);
 
@@ -359,6 +554,8 @@ impl Encode for String {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         self.as_bytes().encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<Context, T> Decode<Context> for Box<T>
@@ -419,6 +616,16 @@ where
         let vec = Vec::decode(decoder)?;
         Ok(vec.into_boxed_slice())
     }
+
+    const DECODE_NICHES: NicheTable = <Vec<T> as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let vec = Vec::decode_with_first_byte(first, decoder)?;
+        Ok(vec.into_boxed_slice())
+    }
 }
 
 impl<'de, T, Context> BorrowDecode<'de, Context> for Box<[T]>
@@ -429,6 +636,17 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let vec = Vec::borrow_decode(decoder)?;
+        Ok(vec.into_boxed_slice())
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable =
+        <Vec<T> as BorrowDecode<'de, Context>>::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let vec = Vec::borrow_decode_with_first_byte(first, decoder)?;
         Ok(vec.into_boxed_slice())
     }
 }
@@ -527,6 +745,16 @@ impl<Context> Decode<Context> for Rc<str> {
         let decoded = String::decode(decoder)?;
         Ok(decoded.into())
     }
+
+    const DECODE_NICHES: NicheTable = <String as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let decoded = String::decode_with_first_byte(first, decoder)?;
+        Ok(decoded.into())
+    }
 }
 
 impl<'de, T, Context> BorrowDecode<'de, Context> for Rc<T>
@@ -557,6 +785,16 @@ impl<'de, Context> BorrowDecode<'de, Context> for Rc<str> {
         let decoded = String::decode(decoder)?;
         Ok(decoded.into())
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = <String as Decode<Context>>::DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let decoded = String::decode_with_first_byte(first, decoder)?;
+        Ok(decoded.into())
+    }
 }
 
 impl<T> Encode for Rc<T>
@@ -578,6 +816,16 @@ where
         let vec = Vec::decode(decoder)?;
         Ok(vec.into())
     }
+
+    const DECODE_NICHES: NicheTable = <Vec<T> as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let vec = Vec::decode_with_first_byte(first, decoder)?;
+        Ok(vec.into())
+    }
 }
 
 impl<'de, T, Context> BorrowDecode<'de, Context> for Rc<[T]>
@@ -588,6 +836,17 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let vec = Vec::borrow_decode(decoder)?;
+        Ok(vec.into())
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable =
+        <Vec<T> as BorrowDecode<'de, Context>>::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let vec = Vec::borrow_decode_with_first_byte(first, decoder)?;
         Ok(vec.into())
     }
 }
@@ -616,6 +875,16 @@ where
 impl<Context> Decode<Context> for Arc<str> {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let decoded = String::decode(decoder)?;
+        Ok(decoded.into())
+    }
+
+    const DECODE_NICHES: NicheTable = <String as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let decoded = String::decode_with_first_byte(first, decoder)?;
         Ok(decoded.into())
     }
 }
@@ -650,6 +919,16 @@ impl<'de, Context> BorrowDecode<'de, Context> for Arc<str> {
         let decoded = String::decode(decoder)?;
         Ok(decoded.into())
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = <String as Decode<Context>>::DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let decoded = String::decode_with_first_byte(first, decoder)?;
+        Ok(decoded.into())
+    }
 }
 
 #[cfg(target_has_atomic = "ptr")]
@@ -673,6 +952,16 @@ where
         let vec = Vec::decode(decoder)?;
         Ok(vec.into())
     }
+
+    const DECODE_NICHES: NicheTable = <Vec<T> as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let vec = Vec::decode_with_first_byte(first, decoder)?;
+        Ok(vec.into())
+    }
 }
 
 #[cfg(target_has_atomic = "ptr")]
@@ -684,6 +973,17 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let vec = Vec::borrow_decode(decoder)?;
+        Ok(vec.into())
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable =
+        <Vec<T> as BorrowDecode<'de, Context>>::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let vec = Vec::borrow_decode_with_first_byte(first, decoder)?;
         Ok(vec.into())
     }
 }

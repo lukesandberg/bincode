@@ -156,6 +156,37 @@ impl NicheTable {
         }
     }
 
+    /// The niches of an enum with `variant_count` variants whose variant index is encoded as a
+    /// `u32`, like `Result` or a derived enum.
+    ///
+    /// Under variable int encoding, the bytes from `variant_count` to 250 are unused, as are the
+    /// tags of `u64` and wider. The `u16` and `u32` tags are not, since the decoder also accepts
+    /// small values written with them, so this uses whichever of those two ranges is larger.
+    /// Under fixed int encoding, the index is four bytes: in little endian its low byte comes
+    /// first, and in big endian its first byte is zero.
+    pub const fn variant_index(variant_count: u32) -> NicheTable {
+        if variant_count == 0 {
+            // An empty enum has no values to encode.
+            return NicheTable::NONE;
+        }
+        let varint = if variant_count <= 248 {
+            Niches::range(variant_count as u8, 250)
+        } else {
+            crate::varint::U32_NICHES
+        };
+        let fixint_little_endian = if variant_count <= 255 {
+            Niches::range(variant_count as u8, u8::MAX)
+        } else {
+            Niches::NONE
+        };
+        let fixint_big_endian = if variant_count <= 1 << 24 {
+            Niches::range(1, u8::MAX)
+        } else {
+            Niches::NONE
+        };
+        NicheTable::new(varint, fixint_little_endian, fixint_big_endian)
+    }
+
     /// The niches under config `C`.
     #[inline]
     pub const fn get<C: Config>(self) -> Niches {
@@ -178,6 +209,9 @@ impl NicheTable {
         }
     }
 }
+
+/// The niches of a slice or container length, which is encoded as a `u64`.
+pub(crate) const SLICE_LEN_NICHES: NicheTable = NicheTable::varint_only(crate::varint::U64_NICHES);
 
 #[test]
 fn test_niches() {
@@ -243,4 +277,50 @@ fn test_niche_table() {
         Niches::range(2, 255)
     );
     assert_eq!(varint.option().get::<config::Configuration>(), Niches::NONE);
+}
+
+#[test]
+fn test_variant_index() {
+    use crate::config::{BigEndian, Configuration, Fixint, LittleEndian};
+    type Varint = Configuration;
+    type FixintLe = Configuration<LittleEndian, Fixint>;
+    type FixintBe = Configuration<BigEndian, Fixint>;
+
+    assert_eq!(NicheTable::variant_index(0), NicheTable::NONE);
+
+    let two = NicheTable::variant_index(2);
+    assert_eq!(two.get::<Varint>(), Niches::range(2, 250));
+    assert_eq!(two.get::<FixintLe>(), Niches::range(2, 255));
+    assert_eq!(two.get::<FixintBe>(), Niches::range(1, 255));
+
+    // Past 248 variants, the tags of `u64` and wider leave more room than the bytes up to 250.
+    assert_eq!(
+        NicheTable::variant_index(248).get::<Varint>(),
+        Niches::range(248, 250)
+    );
+    assert_eq!(
+        NicheTable::variant_index(249).get::<Varint>(),
+        crate::varint::U32_NICHES
+    );
+    assert_eq!(
+        NicheTable::variant_index(1000).get::<Varint>(),
+        crate::varint::U32_NICHES
+    );
+
+    assert_eq!(
+        NicheTable::variant_index(255).get::<FixintLe>(),
+        Niches::range(255, 255)
+    );
+    assert_eq!(
+        NicheTable::variant_index(256).get::<FixintLe>(),
+        Niches::NONE
+    );
+    assert_eq!(
+        NicheTable::variant_index(1 << 24).get::<FixintBe>(),
+        Niches::range(1, 255)
+    );
+    assert_eq!(
+        NicheTable::variant_index((1 << 24) + 1).get::<FixintBe>(),
+        Niches::NONE
+    );
 }

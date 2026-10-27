@@ -1,5 +1,5 @@
 use super::{BorrowDecode, BorrowDecoder, Decode, Decoder};
-use crate::error::DecodeError;
+use crate::{error::DecodeError, niche::NicheTable};
 
 macro_rules! impl_tuple {
     () => {};
@@ -17,6 +17,15 @@ macro_rules! impl_tuple {
                     $($extra :: borrow_decode(decoder)?, )*
                 ))
             }
+
+            const BORROW_DECODE_NICHES: NicheTable = $first::BORROW_DECODE_NICHES;
+
+            fn borrow_decode_with_first_byte<BD: BorrowDecoder<'de, Context = Context>>(first: u8, decoder: &mut BD) -> Result<Self, DecodeError> {
+                Ok((
+                    $first::borrow_decode_with_first_byte(first, decoder)?,
+                    $($extra :: borrow_decode(decoder)?, )*
+                ))
+            }
         }
 
         impl<Context, $first $(, $extra)*> Decode<Context> for ($first, $($extra, )*)
@@ -29,6 +38,15 @@ macro_rules! impl_tuple {
             fn decode<DE: Decoder<Context = Context>>(decoder: &mut DE) -> Result<Self, DecodeError> {
                 Ok((
                     $first::decode(decoder)?,
+                    $($extra :: decode(decoder)?, )*
+                ))
+            }
+
+            const DECODE_NICHES: NicheTable = $first::DECODE_NICHES;
+
+            fn decode_with_first_byte<DE: Decoder<Context = Context>>(first: u8, decoder: &mut DE) -> Result<Self, DecodeError> {
+                Ok((
+                    $first::decode_with_first_byte(first, decoder)?,
                     $($extra :: decode(decoder)?, )*
                 ))
             }

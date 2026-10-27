@@ -1,5 +1,5 @@
 use super::{Encode, Encoder};
-use crate::error::EncodeError;
+use crate::{error::EncodeError, niche::NicheTable};
 
 impl<A> Encode for (A,)
 where
@@ -9,6 +9,8 @@ where
         self.0.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B> Encode for (A, B)
@@ -21,6 +23,8 @@ where
         self.1.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C> Encode for (A, B, C)
@@ -35,6 +39,8 @@ where
         self.2.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D> Encode for (A, B, C, D)
@@ -51,6 +57,8 @@ where
         self.3.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E> Encode for (A, B, C, D, E)
@@ -69,6 +77,8 @@ where
         self.4.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F> Encode for (A, B, C, D, E, F)
@@ -89,6 +99,8 @@ where
         self.5.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G> Encode for (A, B, C, D, E, F, G)
@@ -111,6 +123,8 @@ where
         self.6.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G, H> Encode for (A, B, C, D, E, F, G, H)
@@ -135,6 +149,8 @@ where
         self.7.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G, H, I> Encode for (A, B, C, D, E, F, G, H, I)
@@ -161,6 +177,8 @@ where
         self.8.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G, H, I, J> Encode for (A, B, C, D, E, F, G, H, I, J)
@@ -189,6 +207,8 @@ where
         self.9.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G, H, I, J, K> Encode for (A, B, C, D, E, F, G, H, I, J, K)
@@ -219,6 +239,8 @@ where
         self.10.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G, H, I, J, K, L> Encode for (A, B, C, D, E, F, G, H, I, J, K, L)
@@ -251,6 +273,8 @@ where
         self.11.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G, H, I, J, K, L, M> Encode for (A, B, C, D, E, F, G, H, I, J, K, L, M)
@@ -285,6 +309,8 @@ where
         self.12.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G, H, I, J, K, L, M, N> Encode for (A, B, C, D, E, F, G, H, I, J, K, L, M, N)
@@ -321,6 +347,8 @@ where
         self.13.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G, H, I, J, K, L, M, N, O> Encode
@@ -360,6 +388,8 @@ where
         self.14.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }
 
 impl<A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P> Encode
@@ -401,4 +431,6 @@ where
         self.15.encode(encoder)?;
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = A::ENCODE_NICHES;
 }

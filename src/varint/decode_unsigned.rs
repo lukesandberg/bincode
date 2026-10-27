@@ -15,7 +15,17 @@ where
 {
     let mut bytes = [0u8; 1];
     read.read(&mut bytes)?;
-    match bytes[0] {
+    varint_decode_u16_with_first_byte(bytes[0], read, endian)
+}
+
+/// Decodes a varint `u16` whose first byte, `first`, has already been read from `read`.
+#[inline]
+pub fn varint_decode_u16_with_first_byte<R: Reader>(
+    first: u8,
+    read: &mut R,
+    endian: Endianness,
+) -> Result<u16, DecodeError> {
+    match first {
         byte @ 0..=SINGLE_BYTE_MAX => Ok(byte as u16),
         U16_BYTE => {
             let mut bytes = [0u8; 2];
@@ -40,7 +50,17 @@ where
 {
     let mut bytes = [0u8; 1];
     read.read(&mut bytes)?;
-    match bytes[0] {
+    varint_decode_u32_with_first_byte(bytes[0], read, endian)
+}
+
+/// Decodes a varint `u32` whose first byte, `first`, has already been read from `read`.
+#[inline]
+pub fn varint_decode_u32_with_first_byte<R: Reader>(
+    first: u8,
+    read: &mut R,
+    endian: Endianness,
+) -> Result<u32, DecodeError> {
+    match first {
         byte @ 0..=SINGLE_BYTE_MAX => Ok(byte as u32),
         U16_BYTE => {
             let mut bytes = [0u8; 2];
@@ -72,7 +92,17 @@ where
 {
     let mut bytes = [0u8; 1];
     read.read(&mut bytes)?;
-    match bytes[0] {
+    varint_decode_u64_with_first_byte(bytes[0], read, endian)
+}
+
+/// Decodes a varint `u64` whose first byte, `first`, has already been read from `read`.
+#[inline]
+pub fn varint_decode_u64_with_first_byte<R: Reader>(
+    first: u8,
+    read: &mut R,
+    endian: Endianness,
+) -> Result<u64, DecodeError> {
+    match first {
         byte @ 0..=SINGLE_BYTE_MAX => Ok(byte as u64),
         U16_BYTE => {
             let mut bytes = [0u8; 2];
@@ -111,7 +141,17 @@ where
 {
     let mut bytes = [0u8; 1];
     read.read(&mut bytes)?;
-    match bytes[0] {
+    varint_decode_usize_with_first_byte(bytes[0], read, endian)
+}
+
+/// Decodes a varint `usize` whose first byte, `first`, has already been read from `read`.
+#[inline]
+pub fn varint_decode_usize_with_first_byte<R: Reader>(
+    first: u8,
+    read: &mut R,
+    endian: Endianness,
+) -> Result<usize, DecodeError> {
+    match first {
         byte @ 0..=SINGLE_BYTE_MAX => Ok(byte as usize),
         U16_BYTE => {
             let mut bytes = [0u8; 2];
@@ -150,7 +190,17 @@ where
 {
     let mut bytes = [0u8; 1];
     read.read(&mut bytes)?;
-    match bytes[0] {
+    varint_decode_u128_with_first_byte(bytes[0], read, endian)
+}
+
+/// Decodes a varint `u128` whose first byte, `first`, has already been read from `read`.
+#[inline]
+pub fn varint_decode_u128_with_first_byte<R: Reader>(
+    first: u8,
+    read: &mut R,
+    endian: Endianness,
+) -> Result<u128, DecodeError> {
+    match first {
         byte @ 0..=SINGLE_BYTE_MAX => Ok(byte as u128),
         U16_BYTE => {
             let mut bytes = [0u8; 2];

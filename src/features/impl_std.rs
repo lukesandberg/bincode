@@ -4,7 +4,7 @@ use crate::{
     enc::{write::Writer, Encode, Encoder, EncoderImpl},
     error::{DecodeError, EncodeError},
     impl_borrow_decode,
-    niche::NicheTable,
+    niche::{NicheTable, SLICE_LEN_NICHES},
 };
 use core::time::Duration;
 use std::{
@@ -152,17 +152,33 @@ impl Encode for &CStr {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         self.to_bytes().encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl Encode for CString {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         self.as_bytes().encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<Context> Decode<Context> for CString {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let vec = std::vec::Vec::decode(decoder)?;
+        CString::new(vec).map_err(|inner| DecodeError::CStringNulError {
+            position: inner.nul_position(),
+        })
+    }
+
+    const DECODE_NICHES: NicheTable = <std::vec::Vec<u8> as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let vec = std::vec::Vec::decode_with_first_byte(first, decoder)?;
         CString::new(vec).map_err(|inner| DecodeError::CStringNulError {
             position: inner.nul_position(),
         })
@@ -310,6 +326,8 @@ impl Encode for &'_ Path {
             None => Err(EncodeError::InvalidPathCharacters),
         }
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<'de, Context> BorrowDecode<'de, Context> for &'de Path {
@@ -319,17 +337,40 @@ impl<'de, Context> BorrowDecode<'de, Context> for &'de Path {
         let str = <&'de str>::borrow_decode(decoder)?;
         Ok(Path::new(str))
     }
+
+    const BORROW_DECODE_NICHES: NicheTable =
+        <&'de str as BorrowDecode<'de, Context>>::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let str = <&'de str>::borrow_decode_with_first_byte(first, decoder)?;
+        Ok(Path::new(str))
+    }
 }
 
 impl Encode for PathBuf {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         self.as_path().encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<Context> Decode<Context> for PathBuf {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let string = std::string::String::decode(decoder)?;
+        Ok(string.into())
+    }
+
+    const DECODE_NICHES: NicheTable = <std::string::String as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let string = std::string::String::decode_with_first_byte(first, decoder)?;
         Ok(string.into())
     }
 }
@@ -348,19 +389,40 @@ impl Encode for IpAddr {
             }
         }
     }
+
+    const ENCODE_NICHES: NicheTable = NicheTable::variant_index(2);
 }
 
 impl<Context> Decode<Context> for IpAddr {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        match u32::decode(decoder)? {
-            0 => Ok(IpAddr::V4(Ipv4Addr::decode(decoder)?)),
-            1 => Ok(IpAddr::V6(Ipv6Addr::decode(decoder)?)),
-            found => Err(DecodeError::UnexpectedVariant {
-                allowed: &crate::error::AllowedEnumVariants::Range { min: 0, max: 1 },
-                found,
-                type_name: core::any::type_name::<IpAddr>(),
-            }),
-        }
+        let variant = u32::decode(decoder)?;
+        decode_ip_addr_variant(variant, decoder)
+    }
+
+    const DECODE_NICHES: NicheTable = NicheTable::variant_index(2);
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let variant = u32::decode_with_first_byte(first, decoder)?;
+        decode_ip_addr_variant(variant, decoder)
+    }
+}
+
+/// Decodes the variant of an `IpAddr` with index `variant`.
+fn decode_ip_addr_variant<Context, D: Decoder<Context = Context>>(
+    variant: u32,
+    decoder: &mut D,
+) -> Result<IpAddr, DecodeError> {
+    match variant {
+        0 => Ok(IpAddr::V4(Ipv4Addr::decode(decoder)?)),
+        1 => Ok(IpAddr::V6(Ipv6Addr::decode(decoder)?)),
+        found => Err(DecodeError::UnexpectedVariant {
+            allowed: &crate::error::AllowedEnumVariants::Range { min: 0, max: 1 },
+            found,
+            type_name: core::any::type_name::<IpAddr>(),
+        }),
     }
 }
 impl_borrow_decode!(IpAddr);
@@ -408,19 +470,40 @@ impl Encode for SocketAddr {
             }
         }
     }
+
+    const ENCODE_NICHES: NicheTable = NicheTable::variant_index(2);
 }
 
 impl<Context> Decode<Context> for SocketAddr {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        match u32::decode(decoder)? {
-            0 => Ok(SocketAddr::V4(SocketAddrV4::decode(decoder)?)),
-            1 => Ok(SocketAddr::V6(SocketAddrV6::decode(decoder)?)),
-            found => Err(DecodeError::UnexpectedVariant {
-                allowed: &crate::error::AllowedEnumVariants::Range { min: 0, max: 1 },
-                found,
-                type_name: core::any::type_name::<SocketAddr>(),
-            }),
-        }
+        let variant = u32::decode(decoder)?;
+        decode_socket_addr_variant(variant, decoder)
+    }
+
+    const DECODE_NICHES: NicheTable = NicheTable::variant_index(2);
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let variant = u32::decode_with_first_byte(first, decoder)?;
+        decode_socket_addr_variant(variant, decoder)
+    }
+}
+
+/// Decodes the variant of a `SocketAddr` with index `variant`.
+fn decode_socket_addr_variant<Context, D: Decoder<Context = Context>>(
+    variant: u32,
+    decoder: &mut D,
+) -> Result<SocketAddr, DecodeError> {
+    match variant {
+        0 => Ok(SocketAddr::V4(SocketAddrV4::decode(decoder)?)),
+        1 => Ok(SocketAddr::V6(SocketAddrV6::decode(decoder)?)),
+        found => Err(DecodeError::UnexpectedVariant {
+            allowed: &crate::error::AllowedEnumVariants::Range { min: 0, max: 1 },
+            found,
+            type_name: core::any::type_name::<SocketAddr>(),
+        }),
     }
 }
 impl_borrow_decode!(SocketAddr);
@@ -470,6 +553,8 @@ where
         }
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }
 
 impl<Context, K, V, S> Decode<Context> for HashMap<K, V, S>
@@ -480,20 +565,43 @@ where
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
-        decoder.claim_container_read::<(K, V)>(len)?;
-
-        let hash_builder: S = Default::default();
-        let mut map = HashMap::with_capacity_and_hasher(len, hash_builder);
-        for _ in 0..len {
-            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-            decoder.unclaim_bytes_read(core::mem::size_of::<(K, V)>());
-
-            let k = K::decode(decoder)?;
-            let v = V::decode(decoder)?;
-            map.insert(k, v);
-        }
-        Ok(map)
+        decode_hash_map_elements(len, decoder)
     }
+
+    const DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        decode_hash_map_elements(len, decoder)
+    }
+}
+
+/// Decodes the elements of a `HashMap<K, V, S>` that follow its length.
+fn decode_hash_map_elements<Context, K, V, S, D: Decoder<Context = Context>>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<HashMap<K, V, S>, DecodeError>
+where
+    K: Decode<Context> + Eq + std::hash::Hash,
+    V: Decode<Context>,
+    S: std::hash::BuildHasher + Default,
+{
+    decoder.claim_container_read::<(K, V)>(len)?;
+
+    let hash_builder: S = Default::default();
+    let mut map = HashMap::with_capacity_and_hasher(len, hash_builder);
+    for _ in 0..len {
+        // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+        decoder.unclaim_bytes_read(core::mem::size_of::<(K, V)>());
+
+        let k = K::decode(decoder)?;
+        let v = V::decode(decoder)?;
+        map.insert(k, v);
+    }
+    Ok(map)
 }
 impl<'de, K, V, S, Context> BorrowDecode<'de, Context> for HashMap<K, V, S>
 where
@@ -505,20 +613,50 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
-        decoder.claim_container_read::<(K, V)>(len)?;
-
-        let hash_builder: S = Default::default();
-        let mut map = HashMap::with_capacity_and_hasher(len, hash_builder);
-        for _ in 0..len {
-            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-            decoder.unclaim_bytes_read(core::mem::size_of::<(K, V)>());
-
-            let k = K::borrow_decode(decoder)?;
-            let v = V::borrow_decode(decoder)?;
-            map.insert(k, v);
-        }
-        Ok(map)
+        borrow_decode_hash_map_elements(len, decoder)
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        borrow_decode_hash_map_elements(len, decoder)
+    }
+}
+
+/// Decodes the elements of a `HashMap<K, V, S>` that follow its length.
+fn borrow_decode_hash_map_elements<
+    'de,
+    K,
+    V,
+    S,
+    Context,
+    D: BorrowDecoder<'de, Context = Context>,
+>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<HashMap<K, V, S>, DecodeError>
+where
+    K: BorrowDecode<'de, Context> + Eq + std::hash::Hash,
+    V: BorrowDecode<'de, Context>,
+    S: std::hash::BuildHasher + Default,
+{
+    decoder.claim_container_read::<(K, V)>(len)?;
+
+    let hash_builder: S = Default::default();
+    let mut map = HashMap::with_capacity_and_hasher(len, hash_builder);
+    for _ in 0..len {
+        // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+        decoder.unclaim_bytes_read(core::mem::size_of::<(K, V)>());
+
+        let k = K::borrow_decode(decoder)?;
+        let v = V::borrow_decode(decoder)?;
+        map.insert(k, v);
+    }
+    Ok(map)
 }
 
 impl<Context, T, S> Decode<Context> for HashSet<T, S>
@@ -528,19 +666,41 @@ where
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
-        decoder.claim_container_read::<T>(len)?;
-
-        let hash_builder: S = Default::default();
-        let mut map: HashSet<T, S> = HashSet::with_capacity_and_hasher(len, hash_builder);
-        for _ in 0..len {
-            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-            decoder.unclaim_bytes_read(core::mem::size_of::<T>());
-
-            let key = T::decode(decoder)?;
-            map.insert(key);
-        }
-        Ok(map)
+        decode_hash_set_elements(len, decoder)
     }
+
+    const DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        decode_hash_set_elements(len, decoder)
+    }
+}
+
+/// Decodes the elements of a `HashSet<T, S>` that follow its length.
+fn decode_hash_set_elements<Context, T, S, D: Decoder<Context = Context>>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<HashSet<T, S>, DecodeError>
+where
+    T: Decode<Context> + Eq + Hash,
+    S: std::hash::BuildHasher + Default,
+{
+    decoder.claim_container_read::<T>(len)?;
+
+    let hash_builder: S = Default::default();
+    let mut map: HashSet<T, S> = HashSet::with_capacity_and_hasher(len, hash_builder);
+    for _ in 0..len {
+        // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+        decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+
+        let key = T::decode(decoder)?;
+        map.insert(key);
+    }
+    Ok(map)
 }
 
 impl<'de, T, S, Context> BorrowDecode<'de, Context> for HashSet<T, S>
@@ -552,18 +712,40 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let len = crate::de::decode_slice_len(decoder)?;
-        decoder.claim_container_read::<T>(len)?;
-
-        let mut map = HashSet::with_capacity_and_hasher(len, S::default());
-        for _ in 0..len {
-            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
-            decoder.unclaim_bytes_read(core::mem::size_of::<T>());
-
-            let key = T::borrow_decode(decoder)?;
-            map.insert(key);
-        }
-        Ok(map)
+        borrow_decode_hash_set_elements(len, decoder)
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = crate::de::decode_slice_len_with_first_byte(first, decoder)?;
+        borrow_decode_hash_set_elements(len, decoder)
+    }
+}
+
+/// Decodes the elements of a `HashSet<T, S>` that follow its length.
+fn borrow_decode_hash_set_elements<'de, T, S, Context, D: BorrowDecoder<'de, Context = Context>>(
+    len: usize,
+    decoder: &mut D,
+) -> Result<HashSet<T, S>, DecodeError>
+where
+    T: BorrowDecode<'de, Context> + Eq + Hash,
+    S: std::hash::BuildHasher + Default,
+{
+    decoder.claim_container_read::<T>(len)?;
+
+    let mut map = HashSet::with_capacity_and_hasher(len, S::default());
+    for _ in 0..len {
+        // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+        decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+
+        let key = T::borrow_decode(decoder)?;
+        map.insert(key);
+    }
+    Ok(map)
 }
 
 impl<T, S> Encode for HashSet<T, S>
@@ -577,4 +759,6 @@ where
         }
         Ok(())
     }
+
+    const ENCODE_NICHES: NicheTable = SLICE_LEN_NICHES;
 }

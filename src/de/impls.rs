@@ -6,7 +6,7 @@ use crate::{
     config::{Endianness, IntEncoding, InternalEndianConfig, InternalIntEncodingConfig},
     error::{DecodeError, IntegerType},
     impl_borrow_decode,
-    niche::{NicheTable, Niches},
+    niche::{NicheTable, Niches, SLICE_LEN_NICHES},
 };
 use core::{
     cell::{Cell, RefCell},
@@ -18,6 +18,65 @@ use core::{
     ops::{Bound, Range, RangeInclusive},
     time::Duration,
 };
+
+/// Adds the niche items of [Decode] to the impl of an integer: under varint encoding it never
+/// begins with the tags of wider integers.
+macro_rules! impl_varint_niches {
+    ($ty:ty, $niches:expr, $varint_decode_with_first_byte:path) => {
+        const DECODE_NICHES: NicheTable = NicheTable::varint_only($niches);
+
+        fn decode_with_first_byte<D: Decoder<Context = Context>>(
+            first: u8,
+            decoder: &mut D,
+        ) -> Result<Self, DecodeError> {
+            // `decode` claims the full width up front, and the first byte is already claimed.
+            decoder.claim_bytes_read(core::mem::size_of::<$ty>() - 1)?;
+            match D::C::INT_ENCODING {
+                IntEncoding::Variable => {
+                    $varint_decode_with_first_byte(first, decoder.reader(), D::C::ENDIAN)
+                }
+                IntEncoding::Fixed => {
+                    let bytes = read_fixint_rest(first, decoder)?;
+                    Ok(match D::C::ENDIAN {
+                        Endianness::Little => <$ty>::from_le_bytes(bytes),
+                        Endianness::Big => <$ty>::from_be_bytes(bytes),
+                    })
+                }
+            }
+        }
+    };
+}
+
+/// Adds the niche items of [Decode] to the impl of a `NonZero` integer, which has the same niches
+/// as the integer it wraps.
+macro_rules! impl_non_zero_niches {
+    ($ty:ty, $int:ty, $integer_type:expr) => {
+        const DECODE_NICHES: NicheTable = <$int as Decode<Context>>::DECODE_NICHES;
+
+        fn decode_with_first_byte<D: Decoder<Context = Context>>(
+            first: u8,
+            decoder: &mut D,
+        ) -> Result<Self, DecodeError> {
+            <$ty>::new(<$int>::decode_with_first_byte(first, decoder)?).ok_or(
+                DecodeError::NonZeroTypeIsZero {
+                    non_zero_type: $integer_type,
+                },
+            )
+        }
+    };
+}
+
+/// Reads the rest of a fixed-width integer whose first byte has already been read.
+#[inline]
+fn read_fixint_rest<D: Decoder, const N: usize>(
+    first: u8,
+    decoder: &mut D,
+) -> Result<[u8; N], DecodeError> {
+    let mut bytes = [0u8; N];
+    bytes[0] = first;
+    decoder.reader().read(&mut bytes[1..])?;
+    Ok(bytes)
+}
 
 impl<Context> Decode<Context> for bool {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
@@ -95,6 +154,12 @@ impl<Context> Decode<Context> for u16 {
             }
         }
     }
+
+    impl_varint_niches!(
+        u16,
+        crate::varint::U16_NICHES,
+        crate::varint::varint_decode_u16_with_first_byte
+    );
 }
 impl_borrow_decode!(u16);
 
@@ -104,6 +169,8 @@ impl<Context> Decode<Context> for NonZeroU16 {
             non_zero_type: IntegerType::U16,
         })
     }
+
+    impl_non_zero_niches!(NonZeroU16, u16, IntegerType::U16);
 }
 impl_borrow_decode!(NonZeroU16);
 
@@ -124,6 +191,12 @@ impl<Context> Decode<Context> for u32 {
             }
         }
     }
+
+    impl_varint_niches!(
+        u32,
+        crate::varint::U32_NICHES,
+        crate::varint::varint_decode_u32_with_first_byte
+    );
 }
 impl_borrow_decode!(u32);
 
@@ -133,6 +206,8 @@ impl<Context> Decode<Context> for NonZeroU32 {
             non_zero_type: IntegerType::U32,
         })
     }
+
+    impl_non_zero_niches!(NonZeroU32, u32, IntegerType::U32);
 }
 impl_borrow_decode!(NonZeroU32);
 
@@ -153,6 +228,12 @@ impl<Context> Decode<Context> for u64 {
             }
         }
     }
+
+    impl_varint_niches!(
+        u64,
+        crate::varint::U64_NICHES,
+        crate::varint::varint_decode_u64_with_first_byte
+    );
 }
 impl_borrow_decode!(u64);
 
@@ -162,6 +243,8 @@ impl<Context> Decode<Context> for NonZeroU64 {
             non_zero_type: IntegerType::U64,
         })
     }
+
+    impl_non_zero_niches!(NonZeroU64, u64, IntegerType::U64);
 }
 impl_borrow_decode!(NonZeroU64);
 
@@ -182,6 +265,12 @@ impl<Context> Decode<Context> for u128 {
             }
         }
     }
+
+    impl_varint_niches!(
+        u128,
+        crate::varint::U128_NICHES,
+        crate::varint::varint_decode_u128_with_first_byte
+    );
 }
 impl_borrow_decode!(u128);
 
@@ -191,6 +280,8 @@ impl<Context> Decode<Context> for NonZeroU128 {
             non_zero_type: IntegerType::U128,
         })
     }
+
+    impl_non_zero_niches!(NonZeroU128, u128, IntegerType::U128);
 }
 impl_borrow_decode!(NonZeroU128);
 
@@ -216,6 +307,33 @@ impl<Context> Decode<Context> for usize {
             }
         }
     }
+
+    const DECODE_NICHES: NicheTable = NicheTable::varint_only(crate::varint::U64_NICHES);
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        // `decode` claims 8 bytes up front, and the first byte is already claimed.
+        decoder.claim_bytes_read(7)?;
+        match D::C::INT_ENCODING {
+            IntEncoding::Variable => crate::varint::varint_decode_usize_with_first_byte(
+                first,
+                decoder.reader(),
+                D::C::ENDIAN,
+            ),
+            IntEncoding::Fixed => {
+                let bytes = read_fixint_rest(first, decoder)?;
+                let value = match D::C::ENDIAN {
+                    Endianness::Little => u64::from_le_bytes(bytes),
+                    Endianness::Big => u64::from_be_bytes(bytes),
+                };
+                value
+                    .try_into()
+                    .map_err(|_| DecodeError::OutsideUsizeRange(value))
+            }
+        }
+    }
 }
 impl_borrow_decode!(usize);
 
@@ -225,6 +343,8 @@ impl<Context> Decode<Context> for NonZeroUsize {
             non_zero_type: IntegerType::Usize,
         })
     }
+
+    impl_non_zero_niches!(NonZeroUsize, usize, IntegerType::Usize);
 }
 impl_borrow_decode!(NonZeroUsize);
 
@@ -275,6 +395,12 @@ impl<Context> Decode<Context> for i16 {
             }
         }
     }
+
+    impl_varint_niches!(
+        i16,
+        crate::varint::U16_NICHES,
+        crate::varint::varint_decode_i16_with_first_byte
+    );
 }
 impl_borrow_decode!(i16);
 
@@ -284,6 +410,8 @@ impl<Context> Decode<Context> for NonZeroI16 {
             non_zero_type: IntegerType::I16,
         })
     }
+
+    impl_non_zero_niches!(NonZeroI16, i16, IntegerType::I16);
 }
 impl_borrow_decode!(NonZeroI16);
 
@@ -304,6 +432,12 @@ impl<Context> Decode<Context> for i32 {
             }
         }
     }
+
+    impl_varint_niches!(
+        i32,
+        crate::varint::U32_NICHES,
+        crate::varint::varint_decode_i32_with_first_byte
+    );
 }
 impl_borrow_decode!(i32);
 
@@ -313,6 +447,8 @@ impl<Context> Decode<Context> for NonZeroI32 {
             non_zero_type: IntegerType::I32,
         })
     }
+
+    impl_non_zero_niches!(NonZeroI32, i32, IntegerType::I32);
 }
 impl_borrow_decode!(NonZeroI32);
 
@@ -333,6 +469,12 @@ impl<Context> Decode<Context> for i64 {
             }
         }
     }
+
+    impl_varint_niches!(
+        i64,
+        crate::varint::U64_NICHES,
+        crate::varint::varint_decode_i64_with_first_byte
+    );
 }
 impl_borrow_decode!(i64);
 
@@ -342,6 +484,8 @@ impl<Context> Decode<Context> for NonZeroI64 {
             non_zero_type: IntegerType::I64,
         })
     }
+
+    impl_non_zero_niches!(NonZeroI64, i64, IntegerType::I64);
 }
 impl_borrow_decode!(NonZeroI64);
 
@@ -362,6 +506,12 @@ impl<Context> Decode<Context> for i128 {
             }
         }
     }
+
+    impl_varint_niches!(
+        i128,
+        crate::varint::U128_NICHES,
+        crate::varint::varint_decode_i128_with_first_byte
+    );
 }
 impl_borrow_decode!(i128);
 
@@ -371,6 +521,8 @@ impl<Context> Decode<Context> for NonZeroI128 {
             non_zero_type: IntegerType::I128,
         })
     }
+
+    impl_non_zero_niches!(NonZeroI128, i128, IntegerType::I128);
 }
 impl_borrow_decode!(NonZeroI128);
 
@@ -391,6 +543,30 @@ impl<Context> Decode<Context> for isize {
             }
         }
     }
+
+    const DECODE_NICHES: NicheTable = NicheTable::varint_only(crate::varint::U64_NICHES);
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        // `decode` claims 8 bytes up front, and the first byte is already claimed.
+        decoder.claim_bytes_read(7)?;
+        match D::C::INT_ENCODING {
+            IntEncoding::Variable => crate::varint::varint_decode_isize_with_first_byte(
+                first,
+                decoder.reader(),
+                D::C::ENDIAN,
+            ),
+            IntEncoding::Fixed => {
+                let bytes = read_fixint_rest(first, decoder)?;
+                Ok(match D::C::ENDIAN {
+                    Endianness::Little => i64::from_le_bytes(bytes),
+                    Endianness::Big => i64::from_be_bytes(bytes),
+                } as isize)
+            }
+        }
+    }
 }
 impl_borrow_decode!(isize);
 
@@ -400,6 +576,8 @@ impl<Context> Decode<Context> for NonZeroIsize {
             non_zero_type: IntegerType::Isize,
         })
     }
+
+    impl_non_zero_niches!(NonZeroIsize, isize, IntegerType::Isize);
 }
 impl_borrow_decode!(NonZeroIsize);
 
@@ -536,6 +714,17 @@ impl<'a, 'de: 'a, Context> BorrowDecode<'de, Context> for &'a [u8] {
         decoder.claim_bytes_read(len)?;
         decoder.borrow_reader().take_bytes(len)
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = SLICE_LEN_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let len = super::decode_slice_len_with_first_byte(first, decoder)?;
+        decoder.claim_bytes_read(len)?;
+        decoder.borrow_reader().take_bytes(len)
+    }
 }
 
 impl<'a, 'de: 'a, Context> BorrowDecode<'de, Context> for &'a str {
@@ -543,6 +732,17 @@ impl<'a, 'de: 'a, Context> BorrowDecode<'de, Context> for &'a str {
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let slice = <&[u8]>::borrow_decode(decoder)?;
+        core::str::from_utf8(slice).map_err(|inner| DecodeError::Utf8 { inner })
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable =
+        <&'a [u8] as BorrowDecode<'de, Context>>::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let slice = <&[u8]>::borrow_decode_with_first_byte(first, decoder)?;
         core::str::from_utf8(slice).map_err(|inner| DecodeError::Utf8 { inner })
     }
 }
@@ -575,6 +775,36 @@ where
             result.unwrap()
         }
     }
+
+    const DECODE_NICHES: NicheTable = if N == 0 {
+        NicheTable::NONE
+    } else {
+        T::DECODE_NICHES
+    };
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        // Claim and unclaim the same amounts as `decode`, less the first byte, which has already
+        // been claimed.
+        decoder.claim_bytes_read(core::mem::size_of::<[T; N]>().saturating_sub(1))?;
+
+        let result = super::impl_core::collect_into_array(&mut (0..N).map(|i| {
+            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+            if i == 0 {
+                decoder.unclaim_bytes_read(core::mem::size_of::<T>().saturating_sub(1));
+                T::decode_with_first_byte(first, decoder)
+            } else {
+                decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+                T::decode(decoder)
+            }
+        }));
+
+        // result is only None if N does not match the values of `(0..N)`, which it always should
+        // So this unwrap should never occur
+        result.unwrap()
+    }
 }
 
 impl<'de, T, const N: usize, Context> BorrowDecode<'de, Context> for [T; N]
@@ -606,6 +836,36 @@ where
             // So this unwrap should never occur
             result.unwrap()
         }
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable = if N == 0 {
+        NicheTable::NONE
+    } else {
+        T::BORROW_DECODE_NICHES
+    };
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        // Claim and unclaim the same amounts as `decode`, less the first byte, which has already
+        // been claimed.
+        decoder.claim_bytes_read(core::mem::size_of::<[T; N]>().saturating_sub(1))?;
+
+        let result = super::impl_core::collect_into_array(&mut (0..N).map(|i| {
+            // See the documentation on `unclaim_bytes_read` as to why we're doing this here
+            if i == 0 {
+                decoder.unclaim_bytes_read(core::mem::size_of::<T>().saturating_sub(1));
+                T::borrow_decode_with_first_byte(first, decoder)
+            } else {
+                decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+                T::borrow_decode(decoder)
+            }
+        }));
+
+        // result is only None if N does not match the values of `(0..N)`, which it always should
+        // So this unwrap should never occur
+        result.unwrap()
     }
 }
 
@@ -690,21 +950,43 @@ where
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let is_ok = u32::decode(decoder)?;
-        match is_ok {
-            0 => {
-                let t = T::decode(decoder)?;
-                Ok(Ok(t))
-            }
-            1 => {
-                let u = U::decode(decoder)?;
-                Ok(Err(u))
-            }
-            x => Err(DecodeError::UnexpectedVariant {
-                found: x,
-                allowed: &crate::error::AllowedEnumVariants::Range { max: 1, min: 0 },
-                type_name: core::any::type_name::<Result<T, U>>(),
-            }),
+        decode_result_variant(is_ok, decoder)
+    }
+
+    const DECODE_NICHES: NicheTable = NicheTable::variant_index(2);
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let is_ok = u32::decode_with_first_byte(first, decoder)?;
+        decode_result_variant(is_ok, decoder)
+    }
+}
+
+/// Decodes the variant of a `Result<T, U>` with index `is_ok`.
+fn decode_result_variant<Context, T, U, D: Decoder<Context = Context>>(
+    is_ok: u32,
+    decoder: &mut D,
+) -> Result<Result<T, U>, DecodeError>
+where
+    T: Decode<Context>,
+    U: Decode<Context>,
+{
+    match is_ok {
+        0 => {
+            let t = T::decode(decoder)?;
+            Ok(Ok(t))
         }
+        1 => {
+            let u = U::decode(decoder)?;
+            Ok(Err(u))
+        }
+        x => Err(DecodeError::UnexpectedVariant {
+            found: x,
+            allowed: &crate::error::AllowedEnumVariants::Range { max: 1, min: 0 },
+            type_name: core::any::type_name::<Result<T, U>>(),
+        }),
     }
 }
 
@@ -717,21 +999,43 @@ where
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
         let is_ok = u32::decode(decoder)?;
-        match is_ok {
-            0 => {
-                let t = T::borrow_decode(decoder)?;
-                Ok(Ok(t))
-            }
-            1 => {
-                let u = U::borrow_decode(decoder)?;
-                Ok(Err(u))
-            }
-            x => Err(DecodeError::UnexpectedVariant {
-                found: x,
-                allowed: &crate::error::AllowedEnumVariants::Range { max: 1, min: 0 },
-                type_name: core::any::type_name::<Result<T, U>>(),
-            }),
+        borrow_decode_result_variant(is_ok, decoder)
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable = NicheTable::variant_index(2);
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let is_ok = u32::decode_with_first_byte(first, decoder)?;
+        borrow_decode_result_variant(is_ok, decoder)
+    }
+}
+
+/// Decodes the variant of a `Result<T, U>` with index `is_ok`.
+fn borrow_decode_result_variant<'de, T, U, Context, D: BorrowDecoder<'de, Context = Context>>(
+    is_ok: u32,
+    decoder: &mut D,
+) -> Result<Result<T, U>, DecodeError>
+where
+    T: BorrowDecode<'de, Context>,
+    U: BorrowDecode<'de, Context>,
+{
+    match is_ok {
+        0 => {
+            let t = T::borrow_decode(decoder)?;
+            Ok(Ok(t))
         }
+        1 => {
+            let u = U::borrow_decode(decoder)?;
+            Ok(Err(u))
+        }
+        x => Err(DecodeError::UnexpectedVariant {
+            found: x,
+            allowed: &crate::error::AllowedEnumVariants::Range { max: 1, min: 0 },
+            type_name: core::any::type_name::<Result<T, U>>(),
+        }),
     }
 }
 
@@ -819,14 +1123,29 @@ where
 
 impl<Context> Decode<Context> for Duration {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        const NANOS_PER_SEC: u64 = 1_000_000_000;
         let secs: u64 = Decode::decode(decoder)?;
         let nanos: u32 = Decode::decode(decoder)?;
-        if secs.checked_add(u64::from(nanos) / NANOS_PER_SEC).is_none() {
-            return Err(DecodeError::InvalidDuration { secs, nanos });
-        }
-        Ok(Duration::new(secs, nanos))
+        duration_from_parts(secs, nanos)
     }
+
+    const DECODE_NICHES: NicheTable = <u64 as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let secs = u64::decode_with_first_byte(first, decoder)?;
+        let nanos: u32 = Decode::decode(decoder)?;
+        duration_from_parts(secs, nanos)
+    }
+}
+
+fn duration_from_parts(secs: u64, nanos: u32) -> Result<Duration, DecodeError> {
+    const NANOS_PER_SEC: u64 = 1_000_000_000;
+    if secs.checked_add(u64::from(nanos) / NANOS_PER_SEC).is_none() {
+        return Err(DecodeError::InvalidDuration { secs, nanos });
+    }
+    Ok(Duration::new(secs, nanos))
 }
 impl_borrow_decode!(Duration);
 
@@ -836,6 +1155,17 @@ where
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let min = T::decode(decoder)?;
+        let max = T::decode(decoder)?;
+        Ok(min..max)
+    }
+
+    const DECODE_NICHES: NicheTable = T::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let min = T::decode_with_first_byte(first, decoder)?;
         let max = T::decode(decoder)?;
         Ok(min..max)
     }
@@ -851,6 +1181,17 @@ where
         let max = T::borrow_decode(decoder)?;
         Ok(min..max)
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = T::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let min = T::borrow_decode_with_first_byte(first, decoder)?;
+        let max = T::borrow_decode(decoder)?;
+        Ok(min..max)
+    }
 }
 
 impl<Context, T> Decode<Context> for RangeInclusive<T>
@@ -859,6 +1200,17 @@ where
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let min = T::decode(decoder)?;
+        let max = T::decode(decoder)?;
+        Ok(RangeInclusive::new(min, max))
+    }
+
+    const DECODE_NICHES: NicheTable = T::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let min = T::decode_with_first_byte(first, decoder)?;
         let max = T::decode(decoder)?;
         Ok(RangeInclusive::new(min, max))
     }
@@ -875,6 +1227,17 @@ where
         let max = T::borrow_decode(decoder)?;
         Ok(RangeInclusive::new(min, max))
     }
+
+    const BORROW_DECODE_NICHES: NicheTable = T::BORROW_DECODE_NICHES;
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let min = T::borrow_decode_with_first_byte(first, decoder)?;
+        let max = T::borrow_decode(decoder)?;
+        Ok(RangeInclusive::new(min, max))
+    }
 }
 
 impl<T, Context> Decode<Context> for Bound<T>
@@ -882,16 +1245,38 @@ where
     T: Decode<Context>,
 {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        match u32::decode(decoder)? {
-            0 => Ok(Bound::Unbounded),
-            1 => Ok(Bound::Included(T::decode(decoder)?)),
-            2 => Ok(Bound::Excluded(T::decode(decoder)?)),
-            x => Err(DecodeError::UnexpectedVariant {
-                allowed: &crate::error::AllowedEnumVariants::Range { max: 2, min: 0 },
-                found: x,
-                type_name: core::any::type_name::<Bound<T>>(),
-            }),
-        }
+        let variant = u32::decode(decoder)?;
+        decode_bound_variant(variant, decoder)
+    }
+
+    const DECODE_NICHES: NicheTable = NicheTable::variant_index(3);
+
+    fn decode_with_first_byte<D: Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let variant = u32::decode_with_first_byte(first, decoder)?;
+        decode_bound_variant(variant, decoder)
+    }
+}
+
+/// Decodes the variant of a `Bound<T>` with index `variant`.
+fn decode_bound_variant<T, Context, D: Decoder<Context = Context>>(
+    variant: u32,
+    decoder: &mut D,
+) -> Result<Bound<T>, DecodeError>
+where
+    T: Decode<Context>,
+{
+    match variant {
+        0 => Ok(Bound::Unbounded),
+        1 => Ok(Bound::Included(T::decode(decoder)?)),
+        2 => Ok(Bound::Excluded(T::decode(decoder)?)),
+        x => Err(DecodeError::UnexpectedVariant {
+            allowed: &crate::error::AllowedEnumVariants::Range { max: 2, min: 0 },
+            found: x,
+            type_name: core::any::type_name::<Bound<T>>(),
+        }),
     }
 }
 
@@ -902,16 +1287,38 @@ where
     fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(
         decoder: &mut D,
     ) -> Result<Self, DecodeError> {
-        match u32::decode(decoder)? {
-            0 => Ok(Bound::Unbounded),
-            1 => Ok(Bound::Included(T::borrow_decode(decoder)?)),
-            2 => Ok(Bound::Excluded(T::borrow_decode(decoder)?)),
-            x => Err(DecodeError::UnexpectedVariant {
-                allowed: &crate::error::AllowedEnumVariants::Range { max: 2, min: 0 },
-                found: x,
-                type_name: core::any::type_name::<Bound<T>>(),
-            }),
-        }
+        let variant = u32::decode(decoder)?;
+        borrow_decode_bound_variant(variant, decoder)
+    }
+
+    const BORROW_DECODE_NICHES: NicheTable = NicheTable::variant_index(3);
+
+    fn borrow_decode_with_first_byte<D: BorrowDecoder<'de, Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let variant = u32::decode_with_first_byte(first, decoder)?;
+        borrow_decode_bound_variant(variant, decoder)
+    }
+}
+
+/// Decodes the variant of a `Bound<T>` with index `variant`.
+fn borrow_decode_bound_variant<'de, T, Context, D: BorrowDecoder<'de, Context = Context>>(
+    variant: u32,
+    decoder: &mut D,
+) -> Result<Bound<T>, DecodeError>
+where
+    T: BorrowDecode<'de, Context>,
+{
+    match variant {
+        0 => Ok(Bound::Unbounded),
+        1 => Ok(Bound::Included(T::borrow_decode(decoder)?)),
+        2 => Ok(Bound::Excluded(T::borrow_decode(decoder)?)),
+        x => Err(DecodeError::UnexpectedVariant {
+            allowed: &crate::error::AllowedEnumVariants::Range { max: 2, min: 0 },
+            found: x,
+            type_name: core::any::type_name::<Bound<T>>(),
+        }),
     }
 }
 

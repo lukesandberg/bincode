@@ -1,4 +1,4 @@
-use crate::{de::Decode, enc::Encode, impl_borrow_decode};
+use crate::{de::Decode, enc::Encode, impl_borrow_decode, niche::NicheTable};
 use core::sync::atomic::Ordering;
 
 #[cfg(target_has_atomic = "ptr")]
@@ -24,12 +24,25 @@ impl Encode for AtomicBool {
     ) -> Result<(), crate::error::EncodeError> {
         self.load(Ordering::SeqCst).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = bool::ENCODE_NICHES;
 }
 
 #[cfg(target_has_atomic = "8")]
 impl<Context> Decode<Context> for AtomicBool {
     fn decode<D: crate::de::Decoder>(decoder: &mut D) -> Result<Self, crate::error::DecodeError> {
         Ok(AtomicBool::new(Decode::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = <bool as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: crate::de::Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, crate::error::DecodeError> {
+        Ok(AtomicBool::new(bool::decode_with_first_byte(
+            first, decoder,
+        )?))
     }
 }
 #[cfg(target_has_atomic = "8")]
@@ -62,12 +75,23 @@ impl Encode for AtomicU16 {
     ) -> Result<(), crate::error::EncodeError> {
         self.load(Ordering::SeqCst).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = u16::ENCODE_NICHES;
 }
 
 #[cfg(target_has_atomic = "16")]
 impl<Context> Decode<Context> for AtomicU16 {
     fn decode<D: crate::de::Decoder>(decoder: &mut D) -> Result<Self, crate::error::DecodeError> {
         Ok(AtomicU16::new(Decode::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = <u16 as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: crate::de::Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, crate::error::DecodeError> {
+        Ok(AtomicU16::new(u16::decode_with_first_byte(first, decoder)?))
     }
 }
 #[cfg(target_has_atomic = "16")]
@@ -81,12 +105,23 @@ impl Encode for AtomicU32 {
     ) -> Result<(), crate::error::EncodeError> {
         self.load(Ordering::SeqCst).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = u32::ENCODE_NICHES;
 }
 
 #[cfg(target_has_atomic = "32")]
 impl<Context> Decode<Context> for AtomicU32 {
     fn decode<D: crate::de::Decoder>(decoder: &mut D) -> Result<Self, crate::error::DecodeError> {
         Ok(AtomicU32::new(Decode::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = <u32 as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: crate::de::Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, crate::error::DecodeError> {
+        Ok(AtomicU32::new(u32::decode_with_first_byte(first, decoder)?))
     }
 }
 #[cfg(target_has_atomic = "32")]
@@ -100,12 +135,23 @@ impl Encode for AtomicU64 {
     ) -> Result<(), crate::error::EncodeError> {
         self.load(Ordering::SeqCst).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = u64::ENCODE_NICHES;
 }
 
 #[cfg(target_has_atomic = "64")]
 impl<Context> Decode<Context> for AtomicU64 {
     fn decode<D: crate::de::Decoder>(decoder: &mut D) -> Result<Self, crate::error::DecodeError> {
         Ok(AtomicU64::new(Decode::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = <u64 as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: crate::de::Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, crate::error::DecodeError> {
+        Ok(AtomicU64::new(u64::decode_with_first_byte(first, decoder)?))
     }
 }
 #[cfg(target_has_atomic = "64")]
@@ -119,12 +165,25 @@ impl Encode for AtomicUsize {
     ) -> Result<(), crate::error::EncodeError> {
         self.load(Ordering::SeqCst).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = usize::ENCODE_NICHES;
 }
 
 #[cfg(target_has_atomic = "ptr")]
 impl<Context> Decode<Context> for AtomicUsize {
     fn decode<D: crate::de::Decoder>(decoder: &mut D) -> Result<Self, crate::error::DecodeError> {
         Ok(AtomicUsize::new(Decode::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = <usize as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: crate::de::Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, crate::error::DecodeError> {
+        Ok(AtomicUsize::new(usize::decode_with_first_byte(
+            first, decoder,
+        )?))
     }
 }
 #[cfg(target_has_atomic = "ptr")]
@@ -157,12 +216,23 @@ impl Encode for AtomicI16 {
     ) -> Result<(), crate::error::EncodeError> {
         self.load(Ordering::SeqCst).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = i16::ENCODE_NICHES;
 }
 
 #[cfg(target_has_atomic = "16")]
 impl<Context> Decode<Context> for AtomicI16 {
     fn decode<D: crate::de::Decoder>(decoder: &mut D) -> Result<Self, crate::error::DecodeError> {
         Ok(AtomicI16::new(Decode::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = <i16 as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: crate::de::Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, crate::error::DecodeError> {
+        Ok(AtomicI16::new(i16::decode_with_first_byte(first, decoder)?))
     }
 }
 #[cfg(target_has_atomic = "16")]
@@ -176,12 +246,23 @@ impl Encode for AtomicI32 {
     ) -> Result<(), crate::error::EncodeError> {
         self.load(Ordering::SeqCst).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = i32::ENCODE_NICHES;
 }
 
 #[cfg(target_has_atomic = "32")]
 impl<Context> Decode<Context> for AtomicI32 {
     fn decode<D: crate::de::Decoder>(decoder: &mut D) -> Result<Self, crate::error::DecodeError> {
         Ok(AtomicI32::new(Decode::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = <i32 as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: crate::de::Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, crate::error::DecodeError> {
+        Ok(AtomicI32::new(i32::decode_with_first_byte(first, decoder)?))
     }
 }
 #[cfg(target_has_atomic = "32")]
@@ -195,12 +276,23 @@ impl Encode for AtomicI64 {
     ) -> Result<(), crate::error::EncodeError> {
         self.load(Ordering::SeqCst).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = i64::ENCODE_NICHES;
 }
 
 #[cfg(target_has_atomic = "64")]
 impl<Context> Decode<Context> for AtomicI64 {
     fn decode<D: crate::de::Decoder>(decoder: &mut D) -> Result<Self, crate::error::DecodeError> {
         Ok(AtomicI64::new(Decode::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = <i64 as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: crate::de::Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, crate::error::DecodeError> {
+        Ok(AtomicI64::new(i64::decode_with_first_byte(first, decoder)?))
     }
 }
 #[cfg(target_has_atomic = "64")]
@@ -214,12 +306,25 @@ impl Encode for AtomicIsize {
     ) -> Result<(), crate::error::EncodeError> {
         self.load(Ordering::SeqCst).encode(encoder)
     }
+
+    const ENCODE_NICHES: NicheTable = isize::ENCODE_NICHES;
 }
 
 #[cfg(target_has_atomic = "ptr")]
 impl<Context> Decode<Context> for AtomicIsize {
     fn decode<D: crate::de::Decoder>(decoder: &mut D) -> Result<Self, crate::error::DecodeError> {
         Ok(AtomicIsize::new(Decode::decode(decoder)?))
+    }
+
+    const DECODE_NICHES: NicheTable = <isize as Decode<Context>>::DECODE_NICHES;
+
+    fn decode_with_first_byte<D: crate::de::Decoder<Context = Context>>(
+        first: u8,
+        decoder: &mut D,
+    ) -> Result<Self, crate::error::DecodeError> {
+        Ok(AtomicIsize::new(isize::decode_with_first_byte(
+            first, decoder,
+        )?))
     }
 }
 #[cfg(target_has_atomic = "ptr")]

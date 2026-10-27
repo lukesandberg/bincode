@@ -37,6 +37,18 @@ enum AllTypes {
     NonZeroI32(NonZeroI32),
     NonZeroU128(NonZeroU128),
     NonZeroI128(NonZeroI128),
+    // Options whose payloads have niches encode `None` as one of them.
+    OptionBool(Option<Option<bool>>),
+    OptionChar(Option<char>),
+    OptionNonZeroU32(Option<NonZeroU32>),
+    OptionU64(Option<Option<u64>>),
+    OptionString(Option<String>),
+    OptionVec(Option<Vec<AllTypes>>),
+    OptionResult(Option<Result<u8, String>>),
+    OptionTuple(Option<(u16, bool)>),
+    OptionArray(Option<[NonZeroU32; 2]>),
+    OptionDuration(Option<Duration>),
+    OptionIpAddr(Option<IpAddr>),
     // Cow(Cow<'static, [u8]>), Blocked, see comment on decode
 }
 
