@@ -1,5 +1,8 @@
 [workspace]
 members = ["derive", "compatibility"]
+# Prefer dependency versions that support our `rust-version`, so that the MSRV CI jobs
+# keep building when a dependency raises its own MSRV.
+resolver = "3"
 
 [package]
 name = "bincode"
@@ -44,8 +47,7 @@ serde_json = { version = "1.0", default-features = false }
 tempfile = "3.2"
 criterion = "0.6"
 rand = "0.8"
-# uuid 1.27 requires Rust 1.89, above our MSRV
-uuid = { version = ">=1.1, <1.27", features = ["serde"] }
+uuid = { version = "1.1", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 glam = { version = "0.25", features = ["serde"] }
 bincode_1 = { version = "1.3", package = "bincode" }
