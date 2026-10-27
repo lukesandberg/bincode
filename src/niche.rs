@@ -7,6 +7,49 @@
 //! Types declare their niches with [`Encode::ENCODE_NICHES`], [`Decode::DECODE_NICHES`] and
 //! [`BorrowDecode::BORROW_DECODE_NICHES`], all of which default to [`NicheTable::NONE`].
 //!
+//! # Deriving
+//!
+//! Derived types declare no niches unless they opt in with `#[bincode(niche)]`. Opting in changes
+//! how `Option`s of the type are encoded.
+//!
+//! - A struct takes the niches of its first encoded field: fields with `#[bincode(skip)]` don't
+//!   count, and the field must not use `with` or `with_serde`.
+//! - An enum takes the variant indices it doesn't use, see [`NicheTable::variant_index`].
+//!
+//! ```
+//! # #[cfg(feature = "derive")] {
+//! use core::num::NonZeroU32;
+//!
+//! #[derive(bincode::Encode, bincode::Decode)]
+//! #[bincode(niche)]
+//! struct UserId(NonZeroU32);
+//!
+//! #[derive(bincode::Encode, bincode::Decode)]
+//! #[bincode(niche)]
+//! enum Status {
+//!     Active,
+//!     Suspended { days: u32 },
+//! }
+//!
+//! let config = bincode::config::standard();
+//! let user = Some(UserId(NonZeroU32::new(7).unwrap()));
+//! assert_eq!(bincode::encode_to_vec(user, config).unwrap(), [7]);
+//! assert_eq!(bincode::encode_to_vec(None::<UserId>, config).unwrap(), [253]);
+//! assert_eq!(bincode::encode_to_vec(None::<Status>, config).unwrap(), [2]);
+//! # }
+//! ```
+//!
+//! A struct with no encoded fields has no niches to take, so `#[bincode(niche)]` is an error:
+//!
+//! ```compile_fail
+//! #[derive(bincode::Encode)]
+//! #[bincode(niche)]
+//! struct Empty;
+//! ```
+//!
+//! The first field also can't contain the type itself, like `next: Option<Box<Self>>`, since its
+//! niches would depend on themselves.
+//!
 //! [`Encode::ENCODE_NICHES`]: crate::Encode::ENCODE_NICHES
 //! [`Decode::DECODE_NICHES`]: crate::Decode::DECODE_NICHES
 //! [`BorrowDecode::BORROW_DECODE_NICHES`]: crate::BorrowDecode::BORROW_DECODE_NICHES

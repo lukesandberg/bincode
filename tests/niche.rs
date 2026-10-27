@@ -481,3 +481,146 @@ fn niches_are_consistent() {
     check_all_niches(config::legacy());
     check_all_niches(config::legacy().with_big_endian());
 }
+
+#[derive(Encode, Decode, PartialEq, Debug)]
+#[bincode(niche)]
+struct Id {
+    value: NonZeroU32,
+    name: String,
+}
+
+#[derive(Encode, Decode, PartialEq, Debug)]
+#[bincode(niche)]
+struct SkipsFirstField {
+    #[bincode(skip)]
+    cache: u32,
+    flag: bool,
+    count: u32,
+}
+
+#[derive(Encode, Decode, PartialEq, Debug)]
+#[bincode(niche)]
+struct Tuple(NonZeroU8, u8);
+
+#[derive(Encode, Decode, PartialEq, Debug)]
+#[bincode(niche)]
+struct Wrapper<T> {
+    inner: T,
+}
+
+#[derive(Encode, Decode, PartialEq, Debug)]
+#[bincode(niche)]
+struct Outer {
+    id: Id,
+    extra: u8,
+}
+
+#[derive(Encode, Decode, PartialEq, Debug)]
+#[bincode(niche)]
+enum Color {
+    Red,
+    Green,
+    Blue(u8),
+}
+
+#[derive(Encode, bincode::BorrowDecode, PartialEq, Debug)]
+#[bincode(niche)]
+struct Borrowed<'a> {
+    name: &'a str,
+    count: u8,
+}
+
+/// Without `#[bincode(niche)]`, a derived type declares no niches.
+#[derive(Encode, Decode, PartialEq, Debug)]
+struct Plain {
+    flag: bool,
+}
+
+#[test]
+fn derived_structs_take_their_first_field_niches() {
+    let id = Id {
+        value: NonZeroU32::new(5).unwrap(),
+        name: String::from("a"),
+    };
+    check_varint(Some(id), &[5, 1, b'a']);
+    check_varint(None::<Id>, &[253]);
+
+    let skips = SkipsFirstField {
+        cache: 0,
+        flag: true,
+        count: 7,
+    };
+    check_varint(Some(skips), &[1, 7]);
+    check_varint(None::<SkipsFirstField>, &[2]);
+
+    check(Some(Tuple(NonZeroU8::MIN, 7)), &[1, 7]);
+    check(None::<Tuple>, &[0]);
+
+    check(Some(Wrapper { inner: true }), &[1]);
+    check(None::<Wrapper<bool>>, &[2]);
+    check(None::<Wrapper<Wrapper<char>>>, &[0x80]);
+
+    let outer = Outer {
+        id: Id {
+            value: NonZeroU32::new(5).unwrap(),
+            name: String::new(),
+        },
+        extra: 9,
+    };
+    check_varint(Some(outer), &[5, 0, 9]);
+    check_varint(None::<Outer>, &[253]);
+
+    check(Some(Plain { flag: true }), &[1, 1]);
+    check(None::<Plain>, &[0]);
+}
+
+#[test]
+fn derived_enums_take_their_unused_variant_indices() {
+    check_varint(Some(Color::Red), &[0]);
+    check_varint(Some(Color::Blue(9)), &[2, 9]);
+    check_varint(None::<Color>, &[3]);
+    check_varint(Some(None::<Color>), &[3]);
+    check_varint(None::<Option<Color>>, &[4]);
+    check_with_config(&Some(Color::Green), &[1, 0, 0, 0], config::legacy());
+    check_with_config(&None::<Color>, &[3], config::legacy());
+    check_with_config(&None::<Color>, &[1], config::legacy().with_big_endian());
+}
+
+#[test]
+fn derived_borrow_decode_takes_first_field_niches() {
+    let value = Some(Borrowed {
+        name: "x",
+        count: 3,
+    });
+    let bytes = bincode::encode_to_vec(&value, config::standard()).unwrap();
+    assert_eq!(bytes, [1, b'x', 3]);
+    let (decoded, _): (Option<Borrowed>, usize) =
+        bincode::borrow_decode_from_slice(&bytes, config::standard()).unwrap();
+    assert_eq!(decoded, value);
+
+    let bytes = bincode::encode_to_vec(None::<Borrowed>, config::standard()).unwrap();
+    assert_eq!(bytes, [254]);
+    let (decoded, _): (Option<Borrowed>, usize) =
+        bincode::borrow_decode_from_slice(&bytes, config::standard()).unwrap();
+    assert_eq!(decoded, None);
+}
+
+fn check_derived_niches<C: Config>(config: C) {
+    let varint = |niches| NicheTable::varint_only(niches).get::<C>();
+    check_niches::<Id, C>(config, varint(Niches::range(253, 255)));
+    check_niches::<SkipsFirstField, C>(config, Niches::range(2, 255));
+    check_niches::<Tuple, C>(config, Niches::range(0, 0));
+    check_niches::<Wrapper<bool>, C>(config, Niches::range(2, 255));
+    check_niches::<Wrapper<u8>, C>(config, Niches::NONE);
+    check_niches::<Outer, C>(config, varint(Niches::range(253, 255)));
+    check_niches::<Color, C>(config, NicheTable::variant_index(3).get::<C>());
+    check_niches::<Plain, C>(config, Niches::NONE);
+}
+
+#[test]
+fn derived_niches_are_consistent() {
+    check_derived_niches(config::standard());
+    check_derived_niches(config::standard().with_big_endian());
+    check_derived_niches(config::legacy());
+    check_derived_niches(config::legacy().with_big_endian());
+}

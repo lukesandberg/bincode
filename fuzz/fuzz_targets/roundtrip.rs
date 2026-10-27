@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 #[derive(bincode::Decode, bincode::Encode, PartialEq, Debug)]
+#[bincode(niche)]
 enum AllTypes {
     BTreeMap(BTreeMap<u8, u8>),
     HashMap(HashMap<u8, u8>),
@@ -49,7 +50,16 @@ enum AllTypes {
     OptionArray(Option<[NonZeroU32; 2]>),
     OptionDuration(Option<Duration>),
     OptionIpAddr(Option<IpAddr>),
+    OptionAllTypes(Option<Box<AllTypes>>),
+    OptionNicheStruct(Option<NicheStruct>),
     // Cow(Cow<'static, [u8]>), Blocked, see comment on decode
+}
+
+#[derive(bincode::Decode, bincode::Encode, PartialEq, Debug)]
+#[bincode(niche)]
+struct NicheStruct {
+    first: Option<String>,
+    second: u8,
 }
 
 fuzz_target!(|data: &[u8]| {
