@@ -140,7 +140,7 @@ assert_eq!(encoded.as_slice(), &[
 
 ### Options
 
-`Option<T>` is always serialized using a single byte for the discriminant, even in `Fixint` encoding (which normally uses a `u32` for discriminant).
+`Option<T>` is serialized using a single byte for the discriminant, even in `Fixint` encoding (which normally uses a `u32` for discriminant). With [niche optimization](#niche-optimization) enabled, it may use a byte of the payload's encoding instead.
 
 ```rust
 let data: Option<u32> = Some(123);
@@ -155,6 +155,92 @@ assert_eq!(encoded.as_slice(), &[
     0 // the None tag is simply 0
 ]);
 ```
+
+### Niche Optimization
+
+Niche optimization is disabled by default and enabled with [`with_niches`](https://docs.rs/bincode/2/bincode/config/struct.Configuration.html#method.with_niches). Data must be decoded with the same setting it was encoded with.
+
+A type's _niches_ are the byte values that never begin its encoding, and that its decoder rejects as a first byte. With niche optimization enabled, if `T` has niches, `Option<T>` is encoded without a tag:
+
+- `None` is encoded as the first niche of `T`
+- `Some(v)` is encoded as `v`
+
+If `T` has no niches, `Option<T>` is encoded with a tag as described above.
+
+```rust
+let config = bincode::config::standard().with_niches();
+
+// A `NonZeroU8` is never 0, so `None` is 0
+let data = core::num::NonZeroU8::new(5);
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[5]);
+let data: Option<core::num::NonZeroU8> = None;
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[0]);
+
+// A varint `u32` never begins with 253, 254 or 255, so `None` is 253
+let data: Option<u32> = Some(123);
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[123]);
+let data: Option<u32> = None;
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[253]);
+
+// A `u8` has no niches, so its option is encoded with a tag
+let data: Option<u8> = Some(5);
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[1, 5]);
+```
+
+The niches of each type are:
+
+| Type | `VarintEncoding` | `FixintEncoding` |
+|---|---|---|
+| `bool` | `2..=255` | `2..=255` |
+| `NonZeroU8`, `NonZeroI8` | `0` | `0` |
+| `char` | `0x80..=0xC1`, the UTF-8 bytes that never begin a character | `0x80..=0xC1` |
+| `u16`, `i16` | `252..=255` | none |
+| `u32`, `i32` | `253..=255` | none |
+| `u64`, `i64`, `usize`, `isize` | `254..=255` | none |
+| `u128`, `i128` | `255` | none |
+| Other `NonZero` integers and atomic integers | those of the integer they wrap | none |
+| [Collections](#collections) and [strings](#string-and-str) | `254..=255`, those of their `u64` length | none |
+| `Option<T>` | those of `T` but the first, or `2..=255` if `T` has none | same as varint |
+| Enums with `N` variants: `Result`, `Bound`, `IpAddr`, `SocketAddr` and derived enums | `N..=250` if `N <= 248`, otherwise `253..=255` | little endian: `N..=255` if `N <= 255`; big endian: `1..=255` if `N <= 2^24` |
+| Structs, tuples, non-empty arrays, `Duration`, `Range` and `RangeInclusive` | those of the first encoded field | same as varint |
+| `Box`, `Rc`, `Arc`, `Cow`, `Cell`, `RefCell`, `Mutex`, `RwLock`, `Wrapping`, `Reverse` and `AtomicBool` | those of the type they wrap | same as varint |
+| `u8`, `i8`, `f32`, `f64`, `()`, `PhantomData` and empty arrays | none | none |
+
+A varint integer never begins with the tag of a wider integer, or with the reserved `255`. For an enum's discriminant, `251` and `252` are not niches, because a small index written with the `u16` or `u32` tag still decodes.
+
+An option uses up the first niche of its payload and has the rest as its own niches, so nested options use successive niches:
+
+```rust
+let config = bincode::config::standard().with_niches();
+
+let data: Option<Option<bool>> = Some(Some(true));
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[1]);
+let data: Option<Option<bool>> = Some(None);
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[2]);
+let data: Option<Option<bool>> = None;
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[3]);
+```
+
+Derived structs take the niches of their first encoded field, skipping `#[bincode(skip)]` fields. A struct has no niches if that field uses `#[bincode(with = ...)]` or `#[bincode(with_serde)]`, if its type has a lifetime, or if the struct has `#[bincode(no_niche)]`. Derived enums have no niches with `#[bincode(no_niche)]`.
+
+```rust
+#[derive(bincode::Encode)]
+struct UserId(core::num::NonZeroU32);
+
+#[derive(bincode::Encode)]
+enum Status {
+    Active,
+    Suspended { days: u32 },
+}
+
+let config = bincode::config::standard().with_niches();
+let data: Option<UserId> = None;
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[253]);
+let data: Option<Status> = None;
+assert_eq!(bincode::encode_to_vec(data, config).unwrap().as_slice(), &[2]);
+```
+
+Serde's `Option` support can't see the niches of the payload, so options encoded through the [serde](https://docs.rs/bincode/2/bincode/serde/index.html) functions always use a tag.
 
 # Collections
 
